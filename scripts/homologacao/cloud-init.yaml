@@ -1,0 +1,40 @@
+#cloud-config
+# Base para Ubuntu Server 24.04 LTS usado na homologacao.
+# Antes de usar, substitua REPLACE_WITH_SSH_PUBLIC_KEY pela chave publica
+# do operador. O hardening de SSH e o firewall ficam para os scripts do
+# repositorio, depois que o login por chave for validado.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - apache2-utils
+  - ca-certificates
+  - curl
+  - fail2ban
+  - git
+  - gnupg
+  - jq
+  - make
+  - openssl
+  - unattended-upgrades
+  - ufw
+
+users:
+  - name: ops
+    gecos: Operador de homologacao
+    groups:
+      - sudo
+      - adm
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - REPLACE_WITH_SSH_PUBLIC_KEY
+
+runcmd:
+  - [systemctl, enable, --now, fail2ban]
+  - [systemctl, enable, --now, unattended-upgrades]
+  - [git, clone, "https://github.com/iVawly/deploy-automatico.git", "/opt/deploy-platform-src"]
+  - [chown, -R, "ops:ops", "/opt/deploy-platform-src"]
+
+final_message: "Base de homologacao pronta. Entre como ops e siga runbooks/homologacao.md."

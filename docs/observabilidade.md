@@ -12,8 +12,8 @@ Substitua `<DOMAIN>` pelo valor de `DOMAIN` em `.env`.
 
 Cadastre dois monitores no Uptime Kuma para cada aplicação:
 
-1. **Disponibilidade pública** — `HTTPS`, URL `https://<APP_DOMAIN>/`, intervalo 60s, retries 3 (alerta após ~2 min), palavra-chave opcional do serviço quando conhecida.
-2. **Saúde profunda** — `HTTP`, URL `http://traefik:8081/health`, cabeçalho `Host: <APP_DOMAIN>`, intervalo 60s, retries 3, palavra-chave `"status":"healthy"`.
+1. **Disponibilidade pública** — `HTTPS`, URL `https://<APP_DOMAIN>/`, intervalo 30s, retries 3 (alerta após ~90s), palavra-chave opcional do serviço quando conhecida.
+2. **Saúde profunda** — `HTTP`, URL `http://traefik:8081/health`, cabeçalho `Host: <APP_DOMAIN>`, intervalo 30s, retries 3 (alerta após ~90s), palavra-chave `"status":"healthy"`.
 
 A porta 8081 não é publicada no host: só containers da rede `public` alcançam o entrypoint interno de saúde.
 

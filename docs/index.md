@@ -14,6 +14,7 @@
 - [Runner](../runbooks/runner.md)
 - [Reconstrução do servidor](../runbooks/reconstrucao-servidor.md)
 - [Recuperação e autolock](../runbooks/recuperacao.md)
+- [Homologação em Ubuntu 24.04](../runbooks/homologacao.md)
 - [CLI ops-deploy](ops-deploy.md)
 
 ## Arquitetura e risco

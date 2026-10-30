@@ -101,6 +101,8 @@ CodeQL e Scorecard.
 6. Piloto: `ops-deploy bootstrap demo-app 1.0.0`; depois deploy pelo pipeline.
 7. Observabilidade, segurança, drills e aceite: `docs/observabilidade.md`,
    `docs/seguranca.md`, `docs/aceite.md`.
+8. Homologação em Ubuntu 24.04 e execução do aceite:
+   [`runbooks/homologacao.md`](runbooks/homologacao.md).
 
 ## Estrutura
 

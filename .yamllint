@@ -1,5 +1,9 @@
 extends: default
 
+# cloud-init exige a primeira linha exatamente "#cloud-config".
+ignore: |
+  scripts/homologacao/cloud-init.yaml
+
 rules:
   line-length: disable
   document-start: disable

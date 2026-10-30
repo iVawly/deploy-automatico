@@ -12,6 +12,7 @@ Ordem sugerida de leitura para quem assume a operação:
 5. [Runner](runner.md)
 6. [Recuperação e autolock](recuperacao.md)
 7. [Reconstrução do servidor](reconstrucao-servidor.md)
+8. [Homologação em Ubuntu 24.04](homologacao.md)
 
 Regras:
 

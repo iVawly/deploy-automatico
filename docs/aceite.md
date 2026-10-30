@@ -2,6 +2,8 @@
 
 Status inicial: **pendente de execução no servidor**. Preencha data, responsável e link/print ao concluir cada item.
 
+Procedimento de execução: [`runbooks/homologacao.md`](../runbooks/homologacao.md).
+
 | # | Critério do cliente | Como demonstrar | Evidência | Status |
 |---|---|---|---|---|
 | 1 | Alteração passa por testes antes da implantação | PR com teste quebrado; pipeline para antes do build |  | pendente |
