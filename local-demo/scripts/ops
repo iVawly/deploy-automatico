@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Wrapper that runs the real ops-deploy CLI against the local demo.
+set -Eeuo pipefail
+export MSYS_NO_PATHCONV=1
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEMO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLATFORM_ROOT="$(cd "$DEMO_ROOT/.." && pwd)"
+DEMO_WIN="$(cygpath -m "$DEMO_ROOT")"
+
+export OPS_DEPLOY_ROOT="$DEMO_WIN"
+export OPS_DEPLOY_APPS_DIR="$DEMO_WIN/apps"
+export OPS_DEPLOY_DYNAMIC_DIR="$DEMO_WIN/dynamic"
+export OPS_DEPLOY_STATE_DIR="$DEMO_WIN/state"
+export OPS_DEPLOY_CERT_RESOLVER=""
+export OPS_DEPLOY_INSECURE_TLS=1
+export OPS_DEPLOY_DRAIN_SECONDS="${OPS_DEPLOY_DRAIN_SECONDS:-3}"
+export OPS_DEPLOY_PUBLIC_RETRIES="${OPS_DEPLOY_PUBLIC_RETRIES:-4}"
+export OPS_DEPLOY_PUBLIC_INTERVAL="${OPS_DEPLOY_PUBLIC_INTERVAL:-2}"
+export OPS_DEPLOY_ACTOR="${OPS_DEPLOY_ACTOR:-local-demo}"
+export OPS_DEPLOY_COMMIT="${OPS_DEPLOY_COMMIT:-local}"
+
+exec bash "$PLATFORM_ROOT/scripts/ops-deploy" "$@"

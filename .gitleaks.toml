@@ -1,0 +1,17 @@
+title = "deploy-platform"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures, generated local state and documentation placeholders."
+paths = [
+  '''tests/fixtures/.*''',
+  '''apps/demo-app/tests/.*''',
+  '''local-demo/state/.*''',
+]
+regexes = [
+  '''test_app_token''',
+  '''example\.com''',
+  '''<[^>]+>''',
+]

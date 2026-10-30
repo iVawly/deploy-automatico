@@ -1,0 +1,291 @@
+# Platform stack: edge proxy, availability monitoring, log pipeline.
+# Deploy with scripts/bootstrap-platform.sh (renders ${DOMAIN} into dynamic/platform.yml).
+#
+# Images are pinned by digest. Dependabot opens PRs for new digests; review the
+# upstream release notes and the smoke test before merging.
+services:
+  traefik:
+    image: traefik:v3.7.16@sha256:1336e85aaed293bd63d005086e0dd013b04078b26aaeb1c18b26a2f928af7e65
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --ping=true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ${DEPLOY_ROOT}/deploy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ${DEPLOY_ROOT}/dynamic:/etc/traefik/dynamic:ro
+      - traefik_letsencrypt:/letsencrypt
+      - /tmp
+    secrets:
+      - traefik_dashboard_users
+    networks:
+      - public
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test:
+        - CMD
+        - traefik
+        - healthcheck
+        - --ping
+        - --ping.entrypoint=health
+        - --entrypoints.health.address=:8081
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+      update_config:
+        order: start-first
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      rollback_config:
+        order: stop-first
+        parallelism: 1
+        delay: 5s
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:2.5.8@sha256:20abea8c48a163cf0a7a5d5936ab418e4b742d908704e1f58f6c06e56a9c6b67
+    volumes:
+      - uptime_data:/app/data
+      - /tmp
+    networks:
+      - public
+    read_only: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+      update_config:
+        order: stop-first
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      rollback_config:
+        order: stop-first
+        parallelism: 1
+        delay: 5s
+
+  loki:
+    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ${DEPLOY_ROOT}/deploy/logging/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+      - /tmp
+    networks:
+      - internal
+    read_only: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+      update_config:
+        order: stop-first
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      rollback_config:
+        order: stop-first
+        parallelism: 1
+        delay: 5s
+
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    environment:
+      CONTAINERS: "1"
+      EVENTS: "1"
+      INFO: "1"
+      VERSION: "1"
+      PING: "1"
+      POST: "0"
+      AUTH: "0"
+      SECRETS: "0"
+      CONFIGS: "0"
+      SERVICES: "0"
+      TASKS: "0"
+      NODES: "0"
+      SWARM: "0"
+      NETWORKS: "1"
+      IMAGES: "0"
+      VOLUMES: "0"
+      SYSTEM: "0"
+      EXEC: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /tmp
+      - /run
+      - /var/lib/haproxy
+    networks:
+      - internal
+    read_only: true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64M
+      update_config:
+        order: start-first
+        parallelism: 1
+        delay: 5s
+        failure_action: rollback
+      rollback_config:
+        order: stop-first
+        parallelism: 1
+        delay: 5s
+
+  alloy:
+    image: grafana/alloy:v1.21.2@sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+    environment:
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+    volumes:
+      - ${DEPLOY_ROOT}/deploy/logging/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy_data:/var/lib/alloy/data
+      - /tmp
+    networks:
+      - internal
+    read_only: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+      update_config:
+        order: stop-first
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      rollback_config:
+        order: stop-first
+        parallelism: 1
+        delay: 5s
+
+  grafana:
+    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: strict
+    volumes:
+      - ${DEPLOY_ROOT}/deploy/logging/grafana-datasource.yml:/etc/grafana/provisioning/datasources/loki.yml:ro
+      - grafana_data:/var/lib/grafana
+      - /tmp
+    secrets:
+      - grafana_admin_password
+    networks:
+      - public
+      - internal
+    read_only: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+      update_config:
+        order: stop-first
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      rollback_config:
+        order: stop-first
+        parallelism: 1
+        delay: 5s
+
+networks:
+  public:
+    external: true
+  internal:
+    external: true
+
+volumes:
+  traefik_letsencrypt:
+  uptime_data:
+  loki_data:
+  alloy_data:
+  grafana_data:
+
+secrets:
+  traefik_dashboard_users:
+    external: true
+  grafana_admin_password:
+    external: true

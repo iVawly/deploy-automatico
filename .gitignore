@@ -1,0 +1,34 @@
+.env
+.env.*
+!.env.example
+.tools/
+.ops-tools/
+*.local
+var/
+releases.jsonl
+
+# Generated at runtime by ops-deploy / bootstrap-platform.sh
+dynamic/*.yml
+!dynamic/.gitkeep
+
+# Local demo runtime data
+local-demo/dynamic/*.yml
+!local-demo/dynamic/.gitkeep
+!local-demo/dynamic/platform.yml
+local-demo/state/
+local-demo/platform.rendered.yml
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+*.log
+*.sarif
+gitleaks.tar.gz
+.DS_Store
+Thumbs.db

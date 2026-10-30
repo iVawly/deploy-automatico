@@ -1,0 +1,699 @@
+#!/usr/bin/env bash
+# ops-deploy - blue-green deploy CLI for single-node Docker Swarm.
+# Requires: bash 4+, curl, docker (except in probe mode "local").
+set -Eeuo pipefail
+
+CLI_VERSION="1.1.0"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${OPS_DEPLOY_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+APPS_DIR="${OPS_DEPLOY_APPS_DIR:-$ROOT/deploy/apps}"
+DYNAMIC_DIR="${OPS_DEPLOY_DYNAMIC_DIR:-$ROOT/dynamic}"
+STATE_DIR="${OPS_DEPLOY_STATE_DIR:-/var/lib/ops-deploy}"
+LEDGER="$STATE_DIR/releases.jsonl"
+LOCK_FILE="$STATE_DIR/.lock"
+PROBE_MODE="${OPS_DEPLOY_PROBE_MODE:-docker}"
+PROBE_IMAGE_DEFAULT="curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac"
+PUBLIC_RETRIES="${OPS_DEPLOY_PUBLIC_RETRIES:-6}"
+PUBLIC_INTERVAL="${OPS_DEPLOY_PUBLIC_INTERVAL:-2}"
+DRAIN_SECONDS="${OPS_DEPLOY_DRAIN_SECONDS:-10}"
+DRY_RUN="${OPS_DEPLOY_DRY_RUN:-0}"
+ACTOR="${OPS_DEPLOY_ACTOR:-${GITHUB_ACTOR:-$(id -un 2>/dev/null || echo unknown)}}"
+COMMIT="${OPS_DEPLOY_COMMIT:-${GITHUB_SHA:-unknown}}"
+CERT_RESOLVER="${OPS_DEPLOY_CERT_RESOLVER-letsencrypt}"
+INSECURE_TLS="${OPS_DEPLOY_INSECURE_TLS:-0}"
+
+log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
+info() { log "INFO  $*"; }
+warn() { log "WARN  $*"; }
+err() { log "ERROR $*"; }
+die() { err "$*"; exit 1; }
+
+usage() {
+  cat <<'EOF'
+ops-deploy - blue-green deploy CLI for single-node Docker Swarm
+
+Usage:
+  ops-deploy deploy <app> <version>     Test candidate slot, switch traffic, keep previous release
+  ops-deploy rollback <app> [version]   Deploy the last stable (or a given) version and switch traffic back
+  ops-deploy verify <app> [--slot S]    Probe the deep health endpoint (5s timeout) and print JSON
+  ops-deploy status <app> [--json]      Show active release, recent history and service state
+  ops-deploy bootstrap <app> <version>  First installation: create both slots and route to blue
+  ops-deploy recover <app>              Recreate the active slot from the release ledger
+  ops-deploy help                       Show this help
+  ops-deploy version                    Show CLI version
+
+Environment:
+  OPS_DEPLOY_ROOT           Repository root (default: parent of scripts/)
+  OPS_DEPLOY_APPS_DIR       Directory with <app>/app.conf (default: deploy/apps)
+  OPS_DEPLOY_DYNAMIC_DIR    Traefik file-provider directory (default: dynamic/)
+  OPS_DEPLOY_STATE_DIR      State and release ledger (default: /var/lib/ops-deploy)
+  OPS_DEPLOY_PROBE_MODE     docker (default) or local
+  OPS_DEPLOY_DRY_RUN        1 to log mutating commands without executing them
+  OPS_DEPLOY_ALERT_WEBHOOK  Webhook for critical rollback alarms
+  OPS_DEPLOY_DRAIN_SECONDS  Seconds to keep the previous slot running (default: 10)
+  OPS_DEPLOY_ACTOR          Recorded in the ledger (default: GITHUB_ACTOR or id -un)
+  OPS_DEPLOY_COMMIT         Recorded in the ledger (default: GITHUB_SHA)
+  OPS_DEPLOY_CERT_RESOLVER  Traefik certificate resolver; empty uses the default certificate
+  OPS_DEPLOY_INSECURE_TLS   1 to skip TLS verification in the public probe (local demo)
+
+Exit codes: 0 success, 1 failure, 2 usage.
+EOF
+}
+
+json_escape() {
+  printf '%s' "$1" | tr '\n' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "comando obrigatório não encontrado: $1"
+}
+
+require_docker() {
+  [[ "$DRY_RUN" == "1" ]] && return 0
+  require_cmd docker
+}
+
+acquire_lock() {
+  mkdir -p "$STATE_DIR"
+  exec {LOCK_FD}>"$LOCK_FILE"
+  if command -v flock >/dev/null 2>&1; then
+    flock -n "$LOCK_FD" || die "outra operação de deploy está em andamento neste host"
+  fi
+}
+
+load_app() {
+  local app="$1" conf
+  [[ "$app" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "nome de aplicação inválido: '$app'"
+  conf="$APPS_DIR/$app/app.conf"
+  [[ -f "$conf" ]] || die "configuração não encontrada: $conf"
+  set -a
+  # shellcheck source=/dev/null
+  . "$conf"
+  set +a
+
+  : "${APP_NAME:=$app}"
+  [[ "$APP_NAME" == "$app" ]] || die "APP_NAME ($APP_NAME) difere do diretório ($app)"
+  : "${APP_DOMAIN:?APP_DOMAIN não definido em $conf}"
+  : "${APP_PORT:?APP_PORT não definido em $conf}"
+  : "${APP_IMAGE_REPO:?APP_IMAGE_REPO não definido em $conf}"
+  : "${APP_HEALTH_PATH:=/health}"
+  : "${APP_NETWORK:=public}"
+  : "${APP_VOLUME:=}"
+  : "${APP_MOUNT_PATH:=/data}"
+  : "${APP_SECRETS:=}"
+  : "${APP_HEALTH_TIMEOUT:=5}"
+  : "${APP_HEALTH_RETRIES:=12}"
+  : "${APP_HEALTH_INTERVAL:=5}"
+  : "${APP_PUBLIC_CHECK_PATH:=/}"
+  : "${APP_KEEP_PREVIOUS:=0}"
+  : "${APP_PROBE_IMAGE:=$PROBE_IMAGE_DEFAULT}"
+  : "${APP_VERIFY_PUBLIC:=1}"
+  : "${APP_MEMORY_LIMIT:=256M}"
+  : "${APP_CPU_LIMIT:=0.50}"
+  : "${APP_PIDS_LIMIT:=128}"
+  : "${APP_READ_ONLY:=1}"
+  : "${APP_TMPFS_SIZE:=16777216}"
+  : "${APP_STOP_GRACE_PERIOD:=30s}"
+  : "${APP_LOG_MAX_SIZE:=10m}"
+  : "${APP_LOG_MAX_FILE:=3}"
+  : "${APP_CAP_DROP:=ALL}"
+
+  APP_CHECKSUM="$(sha256sum "$conf" | cut -d' ' -f1)"
+}
+
+is_immutable_version() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]
+}
+
+require_version() {
+  local version="$1"
+  [[ -n "$version" ]] || die "versão não informada"
+  is_immutable_version "$version" || die "versão '$version' não é imutável: use SemVer (ex.: 1.4.0) e nunca 'latest'"
+}
+
+service_name() {
+  printf 'app-%s-%s' "$APP_NAME" "$1"
+}
+
+other_slot() {
+  if [[ "$1" == "blue" ]]; then printf 'green'; else printf 'blue'; fi
+}
+
+ledger_append() {
+  local app="$1" version="$2" slot="$3" action="$4" result="$5" message="${6:-}"
+  mkdir -p "$STATE_DIR"
+  printf '{"ts":"%s","app":"%s","version":"%s","commit":"%s","slot":"%s","action":"%s","result":"%s","author":"%s","checksum":"%s","message":"%s"}\n' \
+    "$(now_utc)" \
+    "$(json_escape "$app")" \
+    "$(json_escape "$version")" \
+    "$(json_escape "$COMMIT")" \
+    "$(json_escape "$slot")" \
+    "$(json_escape "$action")" \
+    "$(json_escape "$result")" \
+    "$(json_escape "$ACTOR")" \
+    "$(json_escape "${APP_CHECKSUM:-unknown}")" \
+    "$(json_escape "$message")" \
+    >> "$LEDGER"
+}
+
+json_field() {
+  printf '%s' "$1" | sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p"
+}
+
+ledger_for_app() {
+  local app="$1"
+  [[ -f "$LEDGER" ]] || return 1
+  grep -F "\"app\":\"$app\"" "$LEDGER" || true
+}
+
+last_success_line() {
+  local app="$1" line
+  line="$(ledger_for_app "$app" | grep -F '"result":"success"' | tail -n 1 || true)"
+  [[ -n "$line" ]] || return 1
+  printf '%s' "$line"
+}
+
+active_state() {
+  local app="$1" line
+  line="$(last_success_line "$app")" || return 1
+  ACTIVE_VERSION="$(json_field "$line" version)"
+  ACTIVE_SLOT="$(json_field "$line" slot)"
+  [[ -n "$ACTIVE_VERSION" && -n "$ACTIVE_SLOT" ]]
+}
+
+previous_stable_version() {
+  local app="$1" current="$2" line version
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    version="$(json_field "$line" version)"
+    [[ -n "$version" && "$version" != "$current" ]] && { printf '%s' "$version"; return 0; }
+  done < <(ledger_for_app "$app" | grep -F '"result":"success"' | tac)
+  return 1
+}
+
+version_is_stable() {
+  local app="$1" version="$2"
+  ledger_for_app "$app" | grep -F '"result":"success"' | grep -F "\"version\":\"$version\"" >/dev/null 2>&1
+}
+
+run_cmd() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf 'DRY-RUN %s\n' "$*" >&2
+    return 0
+  fi
+  "$@"
+}
+
+# Sets HEALTH_CODE and HEALTH_BODY.
+split_response() {
+  local out="$1"
+  if [[ "$out" == *$'\n'* ]]; then
+    HEALTH_CODE="${out##*$'\n'}"
+    HEALTH_BODY="${out%$'\n'*}"
+  else
+    HEALTH_BODY="$out"
+    HEALTH_CODE=""
+  fi
+}
+
+request() {
+  local url="$1" host="${2:-}" out
+  if [[ "$PROBE_MODE" == "local" ]]; then
+    if [[ -n "$host" ]]; then
+      out="$(curl -sS --max-time "$APP_HEALTH_TIMEOUT" -o - -w $'\n%{http_code}' -H "Host: $host" "$url" 2>/dev/null || true)"
+    else
+      out="$(curl -sS --max-time "$APP_HEALTH_TIMEOUT" -o - -w $'\n%{http_code}' "$url" 2>/dev/null || true)"
+    fi
+  else
+    require_docker
+    local -a extra=()
+    if [[ -n "$host" ]]; then
+      if [[ "$url" == https://* ]]; then
+        extra+=(--connect-to "$host:443:traefik:443")
+        [[ "$INSECURE_TLS" == "1" ]] && extra+=(-k)
+      else
+        extra+=(-H "Host: $host")
+      fi
+    fi
+    out="$(run_cmd docker run --rm --network "$APP_NETWORK" --entrypoint curl "$APP_PROBE_IMAGE" \
+      -sS --max-time "$APP_HEALTH_TIMEOUT" "${extra[@]}" -o - -w $'\n%{http_code}' "$url" 2>/dev/null || true)"
+  fi
+  printf '%s' "$out"
+}
+
+probe_health() {
+  local slot="$1" url
+  url="http://$(service_name "$slot"):$APP_PORT$APP_HEALTH_PATH"
+  split_response "$(request "$url")"
+  [[ "$HEALTH_CODE" == "200" ]] || return 1
+  printf '%s' "$HEALTH_BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"'
+}
+
+wait_healthy() {
+  local slot="$1" attempt
+  for ((attempt = 1; attempt <= APP_HEALTH_RETRIES; attempt++)); do
+    if probe_health "$slot"; then
+      return 0
+    fi
+    info "saúde de $APP_NAME/$slot ainda não confirmada (tentativa $attempt/$APP_HEALTH_RETRIES, HTTP ${HEALTH_CODE:-sem resposta})"
+    sleep "$APP_HEALTH_INTERVAL"
+  done
+  return 1
+}
+
+probe_public() {
+  local out
+  if [[ "$PROBE_MODE" == "local" ]]; then
+    out="$(request "http://$APP_DOMAIN$APP_PUBLIC_CHECK_PATH")"
+  else
+    out="$(request "https://$APP_DOMAIN$APP_PUBLIC_CHECK_PATH" "$APP_DOMAIN")"
+  fi
+  split_response "$out"
+  [[ "$HEALTH_CODE" =~ ^[23][0-9][0-9]$ ]]
+}
+
+wait_public() {
+  local attempt
+  for ((attempt = 1; attempt <= PUBLIC_RETRIES; attempt++)); do
+    probe_public && return 0
+    sleep "$PUBLIC_INTERVAL"
+  done
+  return 1
+}
+
+service_exists() {
+  local svc="$1"
+  [[ "$DRY_RUN" == "1" ]] && return 1
+  docker service inspect "$svc" >/dev/null 2>&1
+}
+
+scale_service() {
+  local svc="$1" replicas="$2"
+  service_exists "$svc" || return 0
+  run_cmd docker service scale "$svc=$replicas"
+}
+
+deploy_slot() {
+  local slot="$1" version="$2" svc image
+  svc="$(service_name "$slot")"
+  image="$APP_IMAGE_REPO:$version"
+
+  if service_exists "$svc"; then
+    info "recriando serviço $svc para aplicar a configuração atual"
+    run_cmd docker service rm "$svc" >/dev/null 2>&1 || true
+  fi
+
+  local args=(
+    docker service create
+    --detach
+    --quiet
+    --with-registry-auth
+    --name "$svc"
+    --replicas 1
+    --network "$APP_NETWORK"
+    --restart-condition on-failure
+    --update-order start-first
+    --label "opsdeploy_app=$APP_NAME"
+    --label "opsdeploy_slot=$slot"
+    --label "opsdeploy_version=$version"
+    --container-label "opsdeploy_app=$APP_NAME"
+    --container-label "opsdeploy_slot=$slot"
+    --container-label "opsdeploy_version=$version"
+    --env "APP_VERSION=$version"
+    --env "APP_PORT=$APP_PORT"
+    --init
+    --stop-grace-period "$APP_STOP_GRACE_PERIOD"
+    --mount "type=tmpfs,destination=/tmp,tmpfs-size=$APP_TMPFS_SIZE,tmpfs-mode=1777"
+    --log-driver json-file
+    --log-opt "max-size=$APP_LOG_MAX_SIZE"
+    --log-opt "max-file=$APP_LOG_MAX_FILE"
+  )
+  [[ "$APP_READ_ONLY" == "1" ]] && args+=(--read-only)
+  [[ -n "$APP_CAP_DROP" ]] && args+=(--cap-drop "$APP_CAP_DROP")
+  [[ -n "$APP_MEMORY_LIMIT" ]] && args+=(--limit-memory "$APP_MEMORY_LIMIT")
+  [[ -n "$APP_CPU_LIMIT" ]] && args+=(--limit-cpu "$APP_CPU_LIMIT")
+  [[ "${APP_PIDS_LIMIT:-0}" =~ ^[0-9]+$ && "$APP_PIDS_LIMIT" -gt 0 ]] && args+=(--limit-pids "$APP_PIDS_LIMIT")
+  if [[ -n "$APP_VOLUME" ]]; then
+    args+=(--mount "type=volume,source=$APP_VOLUME,target=$APP_MOUNT_PATH")
+  fi
+  local secret
+  for secret in $APP_SECRETS; do
+    args+=(--secret "$secret")
+  done
+  args+=("$image")
+  info "criando serviço $svc com $image"
+  run_cmd "${args[@]}"
+}
+
+write_route() {
+  local slot="$1" version="$2" file tmp tls
+  mkdir -p "$DYNAMIC_DIR"
+  file="$DYNAMIC_DIR/$APP_NAME.yml"
+  tmp="$(mktemp "$DYNAMIC_DIR/.$APP_NAME.XXXXXX")"
+  if [[ -n "$CERT_RESOLVER" ]]; then
+    tls="      tls:
+        certResolver: $CERT_RESOLVER"
+  else
+    tls="      tls: {}"
+  fi
+  cat > "$tmp" <<EOF
+# generated by ops-deploy - do not edit manually
+# app=$APP_NAME version=$version slot=$slot
+http:
+  routers:
+    $APP_NAME:
+      rule: "Host(\`$APP_DOMAIN\`) && !PathPrefix(\`$APP_HEALTH_PATH\`)"
+      entryPoints:
+        - websecure
+      service: $APP_NAME
+$tls
+    $APP_NAME-health:
+      rule: "Host(\`$APP_DOMAIN\`) && PathPrefix(\`$APP_HEALTH_PATH\`)"
+      entryPoints:
+        - health
+      service: $APP_NAME
+  services:
+    $APP_NAME:
+      loadBalancer:
+        servers:
+          - url: "http://$(service_name "$slot"):$APP_PORT"
+EOF
+  mv "$tmp" "$file"
+}
+
+backup_route() {
+  ROUTE_BACKUP=""
+  [[ -f "$DYNAMIC_DIR/$APP_NAME.yml" ]] || return 0
+  ROUTE_BACKUP="$(mktemp)"
+  cp "$DYNAMIC_DIR/$APP_NAME.yml" "$ROUTE_BACKUP"
+}
+
+restore_route() {
+  local file="$DYNAMIC_DIR/$APP_NAME.yml"
+  if [[ -n "${ROUTE_BACKUP:-}" && -f "$ROUTE_BACKUP" ]]; then
+    cp "$ROUTE_BACKUP" "$file"
+    rm -f "$ROUTE_BACKUP"
+    ROUTE_BACKUP=""
+  else
+    rm -f "$file"
+  fi
+}
+
+send_alert() {
+  local subject="$1" body="$2"
+  if [[ -n "${OPS_DEPLOY_ALERT_WEBHOOK:-}" ]]; then
+    run_cmd curl -fsS --max-time 10 -H 'Content-Type: application/json' \
+      --data "{\"text\":\"$(json_escape "$subject")\",\"details\":\"$(json_escape "$body")\"}" \
+      "$OPS_DEPLOY_ALERT_WEBHOOK" >/dev/null || warn "falha ao enviar alerta para o webhook configurado"
+  else
+    warn "ALERTA CRÍTICO: $subject - $body"
+  fi
+}
+
+cmd_bootstrap() {
+  local app="${1:-}" version="${2:-}"
+  [[ -n "$app" && -n "$version" ]] || { usage; exit 2; }
+  load_app "$app"
+  require_version "$version"
+  require_docker
+  acquire_lock
+
+  if last_success_line "$app" >/dev/null 2>&1; then
+    die "já existe release estável para $app; use 'ops-deploy deploy $app $version'"
+  fi
+
+  info "bootstrap de $app na versão $version (slot blue)"
+  run_cmd docker pull "$APP_IMAGE_REPO:$version"
+  deploy_slot blue "$version"
+
+  if ! wait_healthy blue; then
+    scale_service "$(service_name blue)" 0 || true
+    ledger_append "$app" "$version" blue bootstrap failed "health check reprovado"
+    die "bootstrap abortado: $app/blue não ficou saudável"
+  fi
+
+  write_route blue "$version"
+
+  if ! wait_public; then
+    scale_service "$(service_name blue)" 0 || true
+    ledger_append "$app" "$version" blue bootstrap failed "verificação pública reprovada"
+    die "bootstrap abortado: verificação pública reprovada"
+  fi
+
+  ledger_append "$app" "$version" blue bootstrap success "bootstrap concluído"
+  info "bootstrap concluído: $app $version ativo no slot blue"
+}
+
+cmd_recover() {
+  local app="${1:-}"
+  [[ -n "$app" ]] || { usage; exit 2; }
+  load_app "$app"
+  require_docker
+  acquire_lock
+  active_state "$app" || die "nenhuma release estável registrada para $app"
+
+  local slot="$ACTIVE_SLOT" version="$ACTIVE_VERSION"
+  info "recuperando $app $version no slot $slot"
+
+  if ! run_cmd docker pull "$APP_IMAGE_REPO:$version"; then
+    ledger_append "$app" "$version" "$slot" recover failed "falha ao baixar imagem"
+    die "falha ao baixar a imagem $APP_IMAGE_REPO:$version"
+  fi
+
+  if ! deploy_slot "$slot" "$version"; then
+    ledger_append "$app" "$version" "$slot" recover failed "falha ao recriar o serviço ativo"
+    die "falha ao recriar o serviço $slot"
+  fi
+
+  if ! wait_healthy "$slot"; then
+    scale_service "$(service_name "$slot")" 0 || true
+    ledger_append "$app" "$version" "$slot" recover failed "health check reprovado"
+    die "recuperação abortada: $app/$slot não ficou saudável"
+  fi
+
+  write_route "$slot" "$version"
+
+  if ! wait_public; then
+    ledger_append "$app" "$version" "$slot" recover failed "verificação pública reprovada"
+    die "recuperação abortada: verificação pública reprovada"
+  fi
+
+  ledger_append "$app" "$version" "$slot" recover success "serviço recriado a partir do ledger"
+  info "recuperação concluída: $app $version ativo no slot $slot"
+}
+
+cmd_deploy() {
+  local app="${1:-}" version="${2:-}"
+  [[ -n "$app" && -n "$version" ]] || { usage; exit 2; }
+  load_app "$app"
+  require_version "$version"
+  require_docker
+  acquire_lock
+
+  active_state "$app" || die "nenhuma release estável registrada para $app; execute 'ops-deploy bootstrap $app $version'"
+
+  local from_slot="$ACTIVE_SLOT" from_version="$ACTIVE_VERSION" to_slot
+  to_slot="$(other_slot "$from_slot")"
+
+  info "deploy de $app $version: slot ativo $from_slot ($from_version), candidato $to_slot"
+
+  if ! probe_health "$from_slot"; then
+    ledger_append "$app" "$version" "$to_slot" deploy failed "pré-condição: slot ativo $from_slot não está saudável"
+    die "pré-condição falhou: slot ativo $from_slot não está saudável; deploy não iniciado"
+  fi
+
+  if ! run_cmd docker pull "$APP_IMAGE_REPO:$version"; then
+    ledger_append "$app" "$version" "$to_slot" deploy failed "falha ao baixar imagem"
+    die "falha ao baixar a imagem $APP_IMAGE_REPO:$version"
+  fi
+
+  if ! deploy_slot "$to_slot" "$version"; then
+    ledger_append "$app" "$version" "$to_slot" deploy failed "falha ao criar/atualizar o serviço candidato"
+    die "falha ao preparar o serviço candidato $to_slot; versão ativa preservada"
+  fi
+
+  if ! wait_healthy "$to_slot"; then
+    scale_service "$(service_name "$to_slot")" 0 || true
+    ledger_append "$app" "$version" "$to_slot" deploy failed "health check reprovado antes da troca de tráfego"
+    die "versão $version reprovada: tráfego mantido em $from_slot ($from_version)"
+  fi
+
+  backup_route
+  write_route "$to_slot" "$version"
+
+  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public; then
+    restore_route
+    scale_service "$(service_name "$to_slot")" 0 || true
+    ledger_append "$app" "$version" "$to_slot" deploy failed "verificação pública reprovada após troca de tráfego"
+    die "verificação pública reprovada: tráfego restaurado para $from_slot ($from_version)"
+  fi
+
+  ledger_append "$app" "$version" "$to_slot" deploy success "promovido para $to_slot"
+
+  if [[ "$APP_KEEP_PREVIOUS" != "1" ]]; then
+    [[ "$DRAIN_SECONDS" == "0" ]] || sleep "$DRAIN_SECONDS"
+    scale_service "$(service_name "$from_slot")" 0 || warn "não foi possível reduzir o slot anterior $from_slot"
+  fi
+
+  info "deploy concluído: $app $version ativo no slot $to_slot (anterior: $from_version)"
+}
+
+cmd_rollback() {
+  local app="${1:-}" target="${2:-}"
+  [[ -n "$app" ]] || { usage; exit 2; }
+  load_app "$app"
+  require_docker
+  acquire_lock
+  active_state "$app" || die "nenhuma release estável registrada para $app"
+
+  local current_version="$ACTIVE_VERSION" current_slot="$ACTIVE_SLOT" to_slot
+  if [[ -z "$target" ]]; then
+    target="$(previous_stable_version "$app" "$current_version")" \
+      || die "nenhuma versão estável anterior encontrada para rollback"
+  else
+    require_version "$target"
+    version_is_stable "$app" "$target" \
+      || die "a versão $target não consta como estável no histórico; rollback recusado"
+  fi
+
+  [[ "$target" != "$current_version" ]] || die "a versão $target já está ativa; rollback não necessário"
+  to_slot="$(other_slot "$current_slot")"
+
+  info "rollback de $app: $current_version ($current_slot) -> $target ($to_slot)"
+
+  if ! run_cmd docker pull "$APP_IMAGE_REPO:$target"; then
+    ledger_append "$app" "$target" "$to_slot" rollback failed "falha ao baixar imagem"
+    die "falha ao baixar a imagem $APP_IMAGE_REPO:$target"
+  fi
+
+  if ! deploy_slot "$to_slot" "$target"; then
+    ledger_append "$app" "$target" "$to_slot" rollback failed "falha ao preparar o slot de rollback"
+    die "falha ao preparar o rollback; versão ativa $current_version preservada"
+  fi
+
+  if ! wait_healthy "$to_slot"; then
+    scale_service "$(service_name "$to_slot")" 0 || true
+    ledger_append "$app" "$target" "$to_slot" rollback failed "health check reprovado antes da troca de tráfego"
+    die "rollback abortado: $target não ficou saudável; versão ativa $current_version preservada"
+  fi
+
+  backup_route
+  write_route "$to_slot" "$target"
+
+  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public; then
+    ledger_append "$app" "$target" "$to_slot" rollback failed "verificação pública reprovada após rollback"
+    send_alert "Rollback de $app falhou após troca de tráfego" \
+      "Serviço $app restaurado para $target em $to_slot, mas a verificação pública falhou. Consulte runbooks/incidentes.md"
+    die "rollback aplicado mas não saudável: $target mantido em $to_slot para diagnóstico"
+  fi
+
+  ledger_append "$app" "$target" "$to_slot" rollback success "rollback de $current_version para $target"
+
+  if [[ "$APP_KEEP_PREVIOUS" != "1" ]]; then
+    [[ "$DRAIN_SECONDS" == "0" ]] || sleep "$DRAIN_SECONDS"
+    scale_service "$(service_name "$current_slot")" 0 || warn "não foi possível reduzir o slot $current_slot"
+  fi
+
+  info "rollback concluído: $app $target ativo no slot $to_slot"
+}
+
+cmd_verify() {
+  local app="${1:-}" slot="" json=1
+  [[ -n "$app" ]] || { usage; exit 2; }
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --slot) slot="${2:-}"; shift 2 ;;
+      --quiet) json=0; shift ;;
+      *) die "argumento inválido para verify: $1" ;;
+    esac
+  done
+  load_app "$app"
+
+  if [[ -z "$slot" ]]; then
+    active_state "$app" || die "nenhuma release estável registrada para $app"
+    slot="$ACTIVE_SLOT"
+  fi
+  [[ "$slot" == "blue" || "$slot" == "green" ]] || die "slot inválido: $slot"
+
+  probe_health "$slot" || true
+  if [[ "$json" == "1" ]]; then
+    printf '{"app":"%s","slot":"%s","healthy":%s,"http_code":"%s","checked_at":"%s","body":%s}\n' \
+      "$(json_escape "$app")" "$(json_escape "$slot")" \
+      "$([[ "$HEALTH_CODE" == "200" ]] && printf 'true' || printf 'false')" \
+      "$(json_escape "${HEALTH_CODE:-}")" "$(now_utc)" \
+      "$(printf '%s' "${HEALTH_BODY:-null}" | sed 's/^$/null/')"
+  else
+    printf '%s/%s healthy=%s http=%s\n' "$app" "$slot" \
+      "$([[ "$HEALTH_CODE" == "200" ]] && printf yes || printf no)" "${HEALTH_CODE:-none}"
+  fi
+
+  [[ "$HEALTH_CODE" == "200" ]] && printf '%s' "$HEALTH_BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"'
+}
+
+cmd_status() {
+  local app="${1:-}" as_json=0
+  [[ -n "$app" ]] || { usage; exit 2; }
+  shift || true
+  [[ "${1:-}" == "--json" ]] && as_json=1
+  load_app "$app"
+
+  local line version="" slot="" ts=""
+  if line="$(last_success_line "$app")"; then
+    version="$(json_field "$line" version)"
+    slot="$(json_field "$line" slot)"
+    ts="$(json_field "$line" ts)"
+  fi
+
+  if [[ "$as_json" == "1" ]]; then
+    printf '{"app":"%s","active_version":"%s","active_slot":"%s","since":"%s"}\n' \
+      "$(json_escape "$app")" "$(json_escape "$version")" "$(json_escape "$slot")" "$(json_escape "$ts")"
+    return 0
+  fi
+
+  printf 'app: %s\n' "$app"
+  if [[ -n "$version" ]]; then
+    printf 'versão ativa: %s\nslot ativo: %s\ndesde: %s\n' "$version" "$slot" "$ts"
+  else
+    printf 'versão ativa: (nenhuma release registrada)\n'
+  fi
+
+  printf '\núltimas releases:\n'
+  if [[ -f "$LEDGER" ]]; then
+    ledger_for_app "$app" | tail -n 5 | while IFS= read -r line; do
+      printf '  %s %s %s/%s -> %s (%s)\n' \
+        "$(json_field "$line" ts)" "$(json_field "$line" action)" \
+        "$(json_field "$line" version)" "$(json_field "$line" slot)" \
+        "$(json_field "$line" result)" "$(json_field "$line" message)"
+    done
+  else
+    printf '  (sem histórico)\n'
+  fi
+
+  if command -v docker >/dev/null 2>&1 && [[ "$DRY_RUN" != "1" ]]; then
+    printf '\nserviços:\n'
+    docker service ps --no-trunc \
+      --filter "label=opsdeploy_app=$app" \
+      --format '  {{.Name}} {{.CurrentState}} {{.Error}}' 2>/dev/null | head -n 6 || true
+  fi
+}
+
+main() {
+  local command="${1:-help}"
+  case "$command" in
+    deploy) shift; cmd_deploy "$@" ;;
+    rollback) shift; cmd_rollback "$@" ;;
+    verify) shift; cmd_verify "$@" ;;
+    status) shift; cmd_status "$@" ;;
+    bootstrap) shift; cmd_bootstrap "$@" ;;
+    recover) shift; cmd_recover "$@" ;;
+    help | --help | -h) usage ;;
+    version | --version) printf 'ops-deploy %s\n' "$CLI_VERSION" ;;
+    *) err "comando desconhecido: $command"; usage; exit 2 ;;
+  esac
+}
+
+main "$@"

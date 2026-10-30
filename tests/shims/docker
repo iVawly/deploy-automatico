@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Test double for the docker CLI. Records invocations and simulates Swarm state.
+set -u
+
+: "${SHIM_LOG:?SHIM_LOG not set}"
+: "${SHIM_STATE:?SHIM_STATE not set}"
+mkdir -p "$SHIM_STATE/services"
+
+printf 'docker %s\n' "$*" >>"$SHIM_LOG"
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  pull)
+    exit 0
+    ;;
+  service)
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      inspect)
+        name="${1:-}"
+        [[ -f "$SHIM_STATE/services/$name" ]]
+        ;;
+      create)
+        name=""
+        image=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --name) name="$2"; shift 2 ;;
+            --label | --container-label | --env | --secret | --mount | --network | --replicas | --update-order | --restart-condition) shift 2 ;;
+            --detach | --quiet | --with-registry-auth) shift ;;
+            *) image="$1"; shift ;;
+          esac
+        done
+        [[ -n "$name" ]] || exit 1
+        printf '%s' "$image" >"$SHIM_STATE/services/$name"
+        ;;
+      rm)
+        for svc in "$@"; do
+          [[ "${svc:-}" == --* ]] && continue
+          rm -f "$SHIM_STATE/services/$svc" "$SHIM_STATE/services/$svc.replicas"
+        done
+        ;;
+      update)
+        name=""
+        image=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --image) image="$2"; shift 2 ;;
+            --env-add | --label-add) shift 2 ;;
+            --quiet | --with-registry-auth | --force) shift ;;
+            *) name="$1"; shift ;;
+          esac
+        done
+        [[ -n "$name" ]] || exit 1
+        [[ -f "$SHIM_STATE/services/$name" ]] || exit 1
+        printf '%s' "$image" >"$SHIM_STATE/services/$name"
+        ;;
+      scale)
+        while [[ "${1:-}" == --* ]]; do shift; done
+        arg="${1:-}"
+        svc="${arg%=*}"
+        replicas="${arg##*=}"
+        [[ -f "$SHIM_STATE/services/$svc" ]] || exit 1
+        printf '%s' "$replicas" >"$SHIM_STATE/services/$svc.replicas"
+        ;;
+      ps)
+        printf 'test-service  Running  \n'
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    exit 1
+    ;;
+esac

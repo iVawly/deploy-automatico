@@ -1,0 +1,45 @@
+// Collects container logs from Docker and ships them to Loki.
+// Labels are read from the opsdeploy_* container labels set by ops-deploy.
+// The Docker API is reached through docker-socket-proxy, never the raw socket.
+
+discovery.docker "containers" {
+  host = "tcp://docker-socket-proxy:2375"
+}
+
+loki.relabel "containers" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_opsdeploy_app"]
+    target_label  = "app"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_opsdeploy_slot"]
+    target_label  = "slot"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_opsdeploy_version"]
+    target_label  = "version"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_swarm_service_name"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "tcp://docker-socket-proxy:2375"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = loki.relabel.containers.rules
+  forward_to    = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

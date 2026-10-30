@@ -1,0 +1,26 @@
+# Build inputs are app.py and the Dockerfile only.
+.git
+.github
+.gitignore
+.dockerignore
+Dockerfile
+*.md
+tests/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+.env
+.env.*
+*.log
+*.tar
+*.tar.gz
+*.zip
+.DS_Store
+Thumbs.db

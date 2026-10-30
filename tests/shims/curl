@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Test double for curl. Simulates health endpoints and the public route.
+set -u
+
+: "${SHIM_LOG:?SHIM_LOG not set}"
+: "${SHIM_STATE:?SHIM_STATE not set}"
+mkdir -p "$SHIM_STATE"
+
+printf 'curl %s\n' "$*" >>"$SHIM_LOG"
+
+if [[ -n "${SHIM_CURL_FORCE_TIMEOUT:-}" ]]; then
+  exit 28
+fi
+
+url=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -H) shift 2 ;;
+    --max-time | -o | -w) shift 2 ;;
+    -sS) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+
+body='{"status":"healthy","version":"test"}'
+code=200
+
+if [[ "$url" == *"app-test-app-blue"* || "$url" == *"app-test-app-green"* ]]; then
+  slot="blue"
+  [[ "$url" == *"green"* ]] && slot="green"
+  if grep -Fxq "$slot" "$SHIM_STATE/unhealthy" 2>/dev/null; then
+    body='{"status":"unhealthy","checks":[{"name":"db","status":"down"}]}'
+    code=503
+  fi
+elif [[ "$url" == *"traefik"* || "$url" == *"test-app.internal.example.com"* ]]; then
+  if [[ -f "$SHIM_STATE/public-fail" ]]; then
+    body='{"message":"bad gateway"}'
+    code=502
+  else
+    body='{"service":"test-app"}'
+    code=200
+  fi
+else
+  code=404
+  body='{"message":"not found"}'
+fi
+
+printf '%s\n%s' "$body" "$code"

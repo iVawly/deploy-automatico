@@ -1,0 +1,135 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
+jobs:
+  shell:
+    name: shell / bats
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Shellcheck and bash syntax
+        run: |
+          shellcheck scripts/ops-deploy scripts/*.sh scripts/server/*.sh local-demo/scripts/*.sh tests/shims/*
+          while IFS= read -r -d '' file; do bash -n "$file"; done < <(find scripts local-demo/scripts tests -type f \( -name '*.sh' -o -name 'ops-deploy' \) -print0)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: bats-core/bats-core
+          ref: b640ec3cf2c7c9cfc9e6351479261186f76eeec8 # v1.11.1
+          path: .tools/bats-core
+      - name: Bats
+        run: .tools/bats-core/bin/bats tests
+
+  python:
+    name: python tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: env PYTHONPATH=apps/demo-app python -m unittest discover -s apps/demo-app/tests -v
+
+  yaml:
+    name: yaml / actions / dockerfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: yamllint
+        run: |
+          python -m pip install --disable-pip-version-check yamllint==1.38.0
+          yamllint -c .yamllint .
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" --workdir /repo \
+            rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            .github/workflows/*.yml apps/demo-app/.github/workflows/*.yml
+      - name: Hadolint
+        run: |
+          docker run --rm -i hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d \
+            < apps/demo-app/Dockerfile
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          printf '%s  %s\n' "$GITLEAKS_SHA256" gitleaks.tar.gz | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks detect --source . --config .gitleaks.toml --log-opts="--all" --redact --no-banner --exit-code 1
+
+  dependencies:
+    name: filesystem scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+  image:
+    name: build / smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build
+        run: |
+          docker build \
+            --build-arg VERSION=ci \
+            --build-arg REVISION="${GITHUB_SHA}" \
+            --build-arg CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t demo-app:ci apps/demo-app
+      - name: Smoke test
+        run: |
+          docker run -d --name demo-ci -p 18080:8080 -e APP_VERSION=ci demo-app:ci
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then docker logs demo-ci || true; fi
+            docker rm -f demo-ci >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/health | grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "health check failed" >&2
+          exit 1
