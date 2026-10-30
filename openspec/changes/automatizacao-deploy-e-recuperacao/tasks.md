@@ -64,7 +64,7 @@
 ## 7. Rollback, retenção e recuperação
 
 - [x] 7.1 Registrar releases com versão, commit, slot, autor, horário, resultado e checksum em `releases.jsonl`; verificar que um deploy e um rollback geram registros distintos e auditáveis
-- [ ] 7.2 Garantir a retenção das 5 últimas versões estáveis por aplicação no registro e no GHCR; verificar que `status` lista as versões com data e saúde registrada
+- [x] 7.2 Garantir a retenção das 5 últimas versões estáveis por aplicação no registro e no GHCR; verificar que `status` lista as versões com data e saúde registrada
 - [ ] 7.3 Executar drill de deploy defeituoso com rollback automático e medir o tempo de retorno; verificar que a versão estável anterior volta a atender e que o evento é registrado
 - [ ] 7.4 Executar drill de rollback manual para uma versão anterior específica; verificar conclusão em até 5 minutos, saúde confirmada e volume de dados preservado
 - [ ] 7.5 Testar falha durante o próprio rollback; verificar que a versão restaurada é mantida para diagnóstico e que um alerta crítico com link de runbook é emitido

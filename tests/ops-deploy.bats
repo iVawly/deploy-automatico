@@ -191,6 +191,28 @@ bootstrap() {
   grep -q '"author":"tester"' "$SHIM_STATE/releases.jsonl"
 }
 
+@test "status lists up to five stable versions with deployment date and health" {
+  bootstrap
+  for v in 1.0.1 1.0.2 1.0.3 1.0.4 1.0.5 1.0.6; do
+    run "$OPS" deploy test-app "$v"
+    [ "$status" -eq 0 ]
+  done
+
+  run "$OPS" status test-app --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"retention_limit":5'* ]]
+  [[ "$output" == *'"version":"1.0.6"'* ]]
+  [[ "$output" == *'"deployed_at":'* ]]
+  [[ "$output" == *'"healthy":true'* ]]
+  [ "$(printf '%s' "$output" | grep -o '"version":"[0-9.]*"' | wc -l)" -eq 5 ]
+  [[ "$output" != *'"version":"1.0.0"'* ]]
+
+  run "$OPS" status test-app
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"versões estáveis disponíveis (até 5)"* ]]
+  [[ "$output" == *"saudável=sim"* ]]
+}
+
 @test "deploy keeps the persistent volume mount and never removes volumes" {
   bootstrap
   run "$OPS" deploy test-app 1.0.1

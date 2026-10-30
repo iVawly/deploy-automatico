@@ -109,6 +109,7 @@ load_app() {
   : "${APP_HEALTH_INTERVAL:=5}"
   : "${APP_PUBLIC_CHECK_PATH:=/}"
   : "${APP_KEEP_PREVIOUS:=0}"
+  : "${APP_KEEP_VERSIONS:=5}"
   : "${APP_PROBE_IMAGE:=$PROBE_IMAGE_DEFAULT}"
   : "${APP_VERIFY_PUBLIC:=1}"
   : "${APP_MEMORY_LIMIT:=256M}"
@@ -120,6 +121,9 @@ load_app() {
   : "${APP_LOG_MAX_SIZE:=10m}"
   : "${APP_LOG_MAX_FILE:=3}"
   : "${APP_CAP_DROP:=ALL}"
+
+  [[ "$APP_KEEP_VERSIONS" =~ ^[0-9]+$ && "$APP_KEEP_VERSIONS" -gt 0 ]] \
+    || die "APP_KEEP_VERSIONS inválido em $conf: use um inteiro maior que zero"
 
   APP_CHECKSUM="$(sha256sum "$conf" | cut -d' ' -f1)"
 }
@@ -192,6 +196,22 @@ previous_stable_version() {
     [[ -n "$version" && "$version" != "$current" ]] && { printf '%s' "$version"; return 0; }
   done < <(ledger_for_app "$app" | grep -F '"result":"success"' | tac)
   return 1
+}
+
+# Prints the most recent success line for each distinct stable version, newest
+# first, limited to APP_KEEP_VERSIONS entries.
+stable_version_lines() {
+  local app="$1" limit="$APP_KEEP_VERSIONS" line version seen=" " count=0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    version="$(json_field "$line" version)"
+    [[ -n "$version" ]] || continue
+    [[ "$seen" == *" $version "* ]] && continue
+    seen+="$version "
+    printf '%s\n' "$line"
+    count=$((count + 1))
+    [[ "$count" -lt "$limit" ]] || break
+  done < <(ledger_for_app "$app" | grep -F '"result":"success"' | tac)
 }
 
 version_is_stable() {
@@ -649,8 +669,18 @@ cmd_status() {
   fi
 
   if [[ "$as_json" == "1" ]]; then
-    printf '{"app":"%s","active_version":"%s","active_slot":"%s","since":"%s"}\n' \
-      "$(json_escape "$app")" "$(json_escape "$version")" "$(json_escape "$slot")" "$(json_escape "$ts")"
+    local versions_json="" sep="" v s t
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      v="$(json_field "$line" version)"
+      s="$(json_field "$line" slot)"
+      t="$(json_field "$line" ts)"
+      versions_json+="${sep}{\"version\":\"$(json_escape "$v")\",\"slot\":\"$(json_escape "$s")\",\"deployed_at\":\"$(json_escape "$t")\",\"healthy\":true}"
+      sep=","
+    done < <(stable_version_lines "$app")
+    printf '{"app":"%s","active_version":"%s","active_slot":"%s","since":"%s","retention_limit":%s,"stable_versions":[%s]}\n' \
+      "$(json_escape "$app")" "$(json_escape "$version")" "$(json_escape "$slot")" "$(json_escape "$ts")" \
+      "$APP_KEEP_VERSIONS" "$versions_json"
     return 0
   fi
 
@@ -660,6 +690,16 @@ cmd_status() {
   else
     printf 'versão ativa: (nenhuma release registrada)\n'
   fi
+
+  printf '\nversões estáveis disponíveis (até %s):\n' "$APP_KEEP_VERSIONS"
+  local found=0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    found=1
+    printf '  %s slot=%s saudável=sim implantada=%s\n' \
+      "$(json_field "$line" version)" "$(json_field "$line" slot)" "$(json_field "$line" ts)"
+  done < <(stable_version_lines "$app")
+  [[ "$found" == "1" ]] || printf '  (sem versões estáveis)\n'
 
   printf '\núltimas releases:\n'
   if [[ -f "$LEDGER" ]]; then

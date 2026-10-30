@@ -67,11 +67,20 @@ Código de saída 0 somente quando o corpo indica `"status":"healthy"`.
 
 ### status
 
-Mostra versão/slot ativos, as últimas releases e o estado dos serviços.
+Mostra versão/slot ativos, as versões estáveis disponíveis para rollback (até
+`APP_KEEP_VERSIONS`, padrão 5, com data de implantação e saúde registrada), as
+últimas releases e o estado dos serviços.
 
 ```bash
 sudo -u deployer ops-deploy status demo-app
 sudo -u deployer ops-deploy status demo-app --json
+```
+
+O JSON inclui `retention_limit` e `stable_versions`, cada uma com `version`,
+`slot`, `deployed_at` e `healthy`:
+
+```json
+{"app":"demo-app","active_version":"1.4.0","active_slot":"green","since":"...","retention_limit":5,"stable_versions":[{"version":"1.4.0","slot":"green","deployed_at":"...","healthy":true}]}
 ```
 
 ## app.conf
@@ -93,6 +102,7 @@ sudo -u deployer ops-deploy status demo-app --json
 | `APP_PUBLIC_CHECK_PATH` | não | Caminho validado após a troca (padrão `/`) |
 | `APP_VERIFY_PUBLIC` | não | `1` para validar via Traefik |
 | `APP_KEEP_PREVIOUS` | não | `1` mantém o slot anterior em execução |
+| `APP_KEEP_VERSIONS` | não | Versões estáveis listadas para rollback (padrão `5`) |
 | `APP_READ_ONLY` | não | `1` monta o rootfs read-only (padrão) |
 | `APP_MEMORY_LIMIT` | não | Limite de memória (padrão `256M`) |
 | `APP_CPU_LIMIT` | não | Limite de CPU (padrão `0.50`) |

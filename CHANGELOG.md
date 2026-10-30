@@ -27,6 +27,8 @@ Versionamento SemVer para o CLI e para a plataforma.
 
 - `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `LICENSE`,
   `CHANGELOG.md`, templates de issue/PR e configuração de pre-commit.
+- `ops-deploy status` lista as últimas `APP_KEEP_VERSIONS` versões estáveis
+  (padrão 5) com data de implantação e saúde, e expõe `stable_versions` no JSON.
 - `docs/arquitetura.md`, `docs/ameacas.md`, `docs/producao.md` e ADRs.
 - `scripts/server/harden-system.sh` e `scripts/server/restore-config.sh`.
 - `make lint-yaml`, `make lint-actions`, `make lint-docker`, `make build`,
