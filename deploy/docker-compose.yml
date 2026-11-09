@@ -1,4 +1,5 @@
 # Platform stack: edge proxy, availability monitoring, log pipeline.
+# Docker Swarm stack in Compose format; the filename lets Dependabot track images.
 # Deploy with scripts/bootstrap-platform.sh (renders ${DOMAIN} into dynamic/platform.yml).
 #
 # Images are pinned by digest. Dependabot opens PRs for new digests; review the

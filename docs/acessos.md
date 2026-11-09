@@ -14,6 +14,6 @@ Registre a existência do acesso, o responsável e a data de revisão. **Nunca**
 
 - [ ] Login por senha recusado (`ssh -o PreferredAuthentications=password`).
 - [ ] Chave revogada perde acesso imediatamente.
-- [ ] Grupo `ops` contém apenas os responsáveis atuais.
+- [ ] Grupo `ops` contém os responsáveis atuais e root (break-glass).
 - [ ] Token do runner restrito ao repositório e às ações de deploy.
 - [ ] Chave de autolock do Swarm guardada fora do servidor e do Git.

@@ -59,10 +59,10 @@ Checklist do PR:
 ## Adicionando uma aplicação
 
 1. Crie `deploy/apps/<app>/app.conf` a partir do exemplo.
-2. Use SemVer imutável em `APP_IMAGE_REPO:<versao>`.
+2. Use SemVer imutável com digest no deploy (`APP_IMAGE_REPO:<versao>@sha256:...`).
 3. Declare volume, segredos e caminho de saúde.
 4. Mantenha `APP_READ_ONLY=1` salvo necessidade documentada.
-5. Rode `ops-deploy bootstrap <app> <versao>` no primeiro deploy.
+5. Rode `ops-deploy bootstrap <app> <versao> --digest sha256:<hash>` no primeiro deploy.
 6. Adicione monitores no Uptime Kuma e valide logs no Grafana.
 
 ## Segurança

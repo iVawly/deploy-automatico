@@ -13,6 +13,8 @@ setup() {
   export OPS_DEPLOY_PUBLIC_INTERVAL=0
   export OPS_DEPLOY_ACTOR=tester
   export OPS_DEPLOY_COMMIT=deadbeef
+  export TEST_DIGEST="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  export OPS_DEPLOY_IMAGE_DIGEST="$TEST_DIGEST"
   export SHIM_STATE="$TEST_ROOT/state"
   export SHIM_LOG="$TEST_ROOT/shim.log"
   mkdir -p "$SHIM_STATE" "$TEST_ROOT/dynamic"
@@ -70,13 +72,30 @@ bootstrap() {
   [ ! -f "$SHIM_STATE/services/app-test-app-blue" ]
 }
 
+@test "deploy requires an immutable digest" {
+  bootstrap
+  run env OPS_DEPLOY_ALLOW_MUTABLE_TAG=0 OPS_DEPLOY_IMAGE_DIGEST= "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"digest obrigatório"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-green" ]
+}
+
+@test "deploy rejects a malformed digest" {
+  bootstrap
+  run "$OPS" deploy test-app 1.0.1 --digest sha256:deadbeef
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"digest inválido"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-green" ]
+}
+
 @test "deploy promotes the healthy candidate to the inactive slot" {
   bootstrap
   run "$OPS" deploy test-app 1.0.1
   [ "$status" -eq 0 ]
   [ -f "$SHIM_STATE/services/app-test-app-green" ]
+  grep -q "test-app:1.0.1@$TEST_DIGEST" "$SHIM_LOG"
   grep -q 'app-test-app-green:8080' "$TEST_ROOT/dynamic/test-app.yml"
-  grep -q '"version":"1.0.1".*"slot":"green".*"action":"deploy".*"result":"success"' "$SHIM_STATE/releases.jsonl"
+  grep -q '"version":"1.0.1".*"slot":"green".*"action":"deploy".*"result":"success".*"digest":"sha256:aaaa' "$SHIM_STATE/releases.jsonl"
   [ "$(cat "$SHIM_STATE/services/app-test-app-blue.replicas")" = "0" ]
 }
 

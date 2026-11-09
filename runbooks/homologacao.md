@@ -120,9 +120,14 @@ cd /opt/deploy-platform-src
 sudo apt-get install -y apache2-utils jq openssl
 sudo ./scripts/server/harden-system.sh
 sudo ./scripts/server/harden-ssh.sh
-sudo usermod -aG ops ops
+# O script já adiciona root e o usuário que executou o sudo ao grupo ops.
+# Para outros operadores: sudo usermod -aG ops <operador>
 sudo ./scripts/server/firewall.sh
 ```
+
+O `harden-ssh.sh` restringe o SSH ao grupo `ops` (`AllowGroups ops`), adiciona root
+como break-glass e configura sudo em `/etc/sudoers.d/10-ops-deploy`. Teste o login por
+chave em outra janela antes de encerrar a sessão atual.
 
 Se o SSH usar outra porta:
 
@@ -281,10 +286,13 @@ docker buildx build --push --platform linux/amd64 \
   --build-arg REVISION="$(git rev-parse HEAD)" \
   --build-arg CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -t "ghcr.io/$OWNER/demo-app:$VERSION" .
+DIGEST="$(docker buildx imagetools inspect \
+  "ghcr.io/$OWNER/demo-app:$VERSION" --format '{{.Manifest.Digest}}')"
+echo "$DIGEST"
 ```
 
-Use o mesmo valor de `APP_IMAGE_REPO` no `app.conf`. O owner precisa estar em
-minúsculas, como exige o Docker.
+Use o mesmo valor de `APP_IMAGE_REPO` no `app.conf` e guarde o digest para o
+`ops-deploy bootstrap`. O owner precisa estar em minúsculas, como exige o Docker.
 
 Para o cenário de versão defeituosa, publique uma imagem com a dependência
 quebrada:
@@ -315,15 +323,20 @@ git remote add origin git@github.com:<OWNER>/demo-app.git
 git push -u origin main
 ```
 
-O workflow `deploy.yml` agora roda testes em pull requests e só faz
-build/deploy em tags `v*` ou `workflow_dispatch`. Configure o environment
-`production` com revisor e registre o runner nesse repositório.
+No monorepo, o workflow de deploy é `.github/workflows/deploy-demo-app.yml` e
+roda em tags `demo-app-v*` ou `workflow_dispatch`. O workflow dentro de
+`apps/demo-app` só é executado quando esse diretório é a raiz de um repositório
+próprio. Configure o environment `production` com revisor e registre o runner
+no repositório onde o workflow vai rodar.
 
-Primeira versão: publique `1.0.0` pelo caminho manual ou deixe a tag `v1.0.0`
-construir a imagem e falhar no deploy por falta de bootstrap. Depois:
+Primeira versão: publique `1.0.0` pelo caminho manual ou deixe a tag
+`demo-app-v1.0.0` construir a imagem e falhar no deploy por falta de bootstrap.
+Depois, obtenha o digest e faça o bootstrap:
 
 ```bash
-sudo -u deployer ops-deploy bootstrap demo-app 1.0.0
+DIGEST="$(sudo -u deployer docker buildx imagetools inspect \
+  ghcr.io/<OWNER>/demo-app:1.0.0 --format '{{.Manifest.Digest}}')"
+sudo -u deployer ops-deploy bootstrap demo-app 1.0.0 --digest "$DIGEST"
 ```
 
 Para exercitar o pipeline de ponta a ponta, publique uma versão saudável
@@ -335,12 +348,14 @@ git push origin v1.1.0
 ```
 
 Acompanhe o workflow `deploy` no GitHub. O job `build-and-deploy` roda no
-runner self-hosted e chama `ops-deploy deploy demo-app 1.1.0`.
+runner self-hosted e chama `ops-deploy deploy demo-app 1.1.0 --digest <digest>`.
 
 ## 10. Bootstrap da aplicação
 
 ```bash
-sudo -u deployer ops-deploy bootstrap demo-app 1.0.0
+DIGEST="$(sudo -u deployer docker buildx imagetools inspect \
+  ghcr.io/<OWNER>/demo-app:1.0.0 --format '{{.Manifest.Digest}}')"
+sudo -u deployer ops-deploy bootstrap demo-app 1.0.0 --digest "$DIGEST"
 sudo -u deployer ops-deploy status demo-app
 sudo -u deployer ops-deploy verify demo-app
 curl -fsS https://<APP_DOMAIN>/
@@ -373,7 +388,9 @@ Em outro terminal, registre o estado e tente o deploy ruim:
 
 ```bash
 sudo -u deployer ops-deploy status demo-app --json | tee /tmp/status-antes.json
-sudo -u deployer ops-deploy deploy demo-app 1.1.0-bad; echo "exit=$?"
+BAD_DIGEST="$(sudo -u deployer docker buildx imagetools inspect \
+  ghcr.io/<OWNER>/demo-app:1.1.0-bad --format '{{.Manifest.Digest}}')"
+sudo -u deployer ops-deploy deploy demo-app 1.1.0-bad --digest "$BAD_DIGEST"; echo "exit=$?"
 sudo -u deployer ops-deploy status demo-app --json | tee /tmp/status-depois.json
 curl -fsS -o /dev/null -w '%{http_code}\n' https://<APP_DOMAIN>/
 ```

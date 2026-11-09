@@ -1,5 +1,8 @@
 name: deploy
 
+# Executado apenas quando apps/demo-app é a raiz de um repositório próprio.
+# No monorepo, use .github/workflows/deploy-demo-app.yml.
+
 on:
   pull_request:
     branches: [main]
@@ -120,7 +123,7 @@ jobs:
       - name: Deploy
         run: |
           test -x /usr/local/bin/ops-deploy
-          /usr/local/bin/ops-deploy deploy demo-app "$VERSION"
+          /usr/local/bin/ops-deploy deploy demo-app "$VERSION" --digest "${{ steps.build.outputs.digest }}"
 
       - name: Verify
         run: /usr/local/bin/ops-deploy verify demo-app

@@ -19,7 +19,7 @@ Procedimento de execução: [`runbooks/homologacao.md`](../runbooks/homologacao.
 - [ ] Testes do demo-app verdes e imagem `healthy` localmente.
 - [ ] Gitleaks, Trivy, CodeQL e Scorecard sem achados críticos (ou exceção registrada).
 - [ ] Branch protection e environment `production` habilitados.
-- [ ] Imagens da plataforma fixadas por digest; actions por SHA.
+- [ ] Imagens da plataforma e das aplicações fixadas por digest; actions por SHA.
 - [ ] Monitoramento ativo durante um deploy completo.
 - [ ] Rollback concluído em até 5 minutos, volume preservado.
 - [ ] Backup de configuração criado, checksum validado e restaurado em ambiente descartável.

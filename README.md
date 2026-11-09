@@ -95,10 +95,10 @@ CodeQL e Scorecard.
    `firewall.sh`, `install-docker.sh`, `init-swarm.sh`; runbook em
    [`runbooks/reconstrucao-servidor.md`](runbooks/reconstrucao-servidor.md).
 3. Segredos, `.env` e instalação: `scripts/install.sh`.
-4. Plataforma: `sudo ./scripts/bootstrap-platform.sh`.
+4. Plataforma: `sudo /opt/deploy-platform/scripts/bootstrap-platform.sh`.
 5. Runner: `scripts/server/install-runner.sh`; runbook em
    [`runbooks/runner.md`](runbooks/runner.md).
-6. Piloto: `ops-deploy bootstrap demo-app 1.0.0`; depois deploy pelo pipeline.
+6. Piloto: `sudo -u deployer ops-deploy bootstrap demo-app 1.0.0 --digest sha256:<hash>`; depois deploy pelo pipeline.
 7. Observabilidade, segurança, drills e aceite: `docs/observabilidade.md`,
    `docs/seguranca.md`, `docs/aceite.md`.
 8. Homologação em Ubuntu 24.04 e execução do aceite:
@@ -114,7 +114,7 @@ scripts/server/                hardening, Docker, Swarm, runner, backup e restor
 deploy/apps/<app>/             app.conf por aplicação
 deploy/traefik/                configuração estática e template de rotas
 deploy/logging/                Loki, Alloy e datasource do Grafana
-deploy/platform.yml            stack Swarm da plataforma
+deploy/docker-compose.yml      stack Swarm da plataforma
 dynamic/                       rotas geradas (não versionadas)
 apps/demo-app/                 aplicação piloto de referência
 tests/                         testes Bats do CLI com dublês

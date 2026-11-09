@@ -8,17 +8,22 @@ CLI em Bash para deploy blue-green em Docker Swarm de nó único. É o único po
 sudo ./scripts/install.sh
 ```
 
-Instala em `/opt/deploy-platform`, cria `/var/lib/ops-deploy` (dono `deployer`) e o binário `/usr/local/bin/ops-deploy`. A configuração de cada aplicação fica em `deploy/apps/<app>/app.conf`.
+Instala em `/opt/deploy-platform`, cria `/var/lib/ops-deploy` (dono `deployer`) e o link `/usr/local/bin/ops-deploy` para o CLI instalado. A configuração de cada aplicação fica em `deploy/apps/<app>/app.conf`.
 
 ## Subcomandos
 
 ```bash
-ops-deploy bootstrap <app> <versao>
-ops-deploy deploy <app> <versao>
+ops-deploy bootstrap <app> <versao> --digest sha256:<hash>
+ops-deploy deploy <app> <versao> --digest sha256:<hash>
 ops-deploy rollback <app> [versao]
+ops-deploy recover <app>
 ops-deploy verify <app> [--slot blue|green] [--quiet]
 ops-deploy status <app> [--json]
 ```
+
+`deploy` e `bootstrap` exigem digest; `OPS_DEPLOY_IMAGE_DIGEST` pode substituir
+`--digest`. `OPS_DEPLOY_ALLOW_MUTABLE_TAG=1` libera tag sem digest apenas para
+demo local e migração legada.
 
 `verify --quiet` imprime a linha resumida em vez do JSON.
 
@@ -27,21 +32,21 @@ ops-deploy status <app> [--json]
 Primeira instalação. Sobe o slot `blue`, aguarda saúde, publica a rota e grava a release inicial. Recusa se já existir release estável.
 
 ```bash
-sudo -u deployer ops-deploy bootstrap demo-app 1.0.0
+sudo -u deployer ops-deploy bootstrap demo-app 1.0.0 --digest sha256:<hash>
 ```
 
 ### deploy
 
 1. Verifica a saúde do slot ativo (pré-condição).
-2. Baixa a imagem imutável `APP_IMAGE_REPO:<versao>`.
+2. Baixa a imagem imutável `APP_IMAGE_REPO:<versao>@sha256:<hash>`.
 3. Recria o slot inativo com a configuração atual e aguarda o healthcheck profundo.
 4. Troca a rota do Traefik de forma atômica e valida o hostname público.
-5. Registra a release e reduz o slot anterior a zero (após `OPS_DEPLOY_DRAIN_SECONDS`).
+5. Registra a release, incluindo o digest, e reduz o slot anterior a zero (após `OPS_DEPLOY_DRAIN_SECONDS`).
 
 Qualquer falha antes da troca mantém o tráfego no slot ativo. Falha na validação pública restaura a rota anterior.
 
 ```bash
-sudo -u deployer ops-deploy deploy demo-app 1.4.0
+sudo -u deployer ops-deploy deploy demo-app 1.4.0 --digest sha256:<hash>
 ```
 
 ### rollback
@@ -54,6 +59,15 @@ sudo -u deployer ops-deploy rollback demo-app 1.3.2
 ```
 
 Falha de saúde **antes** da troca preserva a versão atual. Falha de saúde **depois** da troca mantém a versão restaurada para diagnóstico e envia alerta crítico.
+
+### recover
+
+Recria o slot ativo a partir da última release bem-sucedida do ledger, usando o
+digest registrado. Não altera versão nem escolhe outro slot.
+
+```bash
+sudo -u deployer ops-deploy recover demo-app
+```
 
 ### verify
 
@@ -76,11 +90,11 @@ sudo -u deployer ops-deploy status demo-app
 sudo -u deployer ops-deploy status demo-app --json
 ```
 
-O JSON inclui `retention_limit` e `stable_versions`, cada uma com `version`,
-`slot`, `deployed_at` e `healthy`:
+O JSON inclui `active_digest`, `retention_limit` e `stable_versions`, cada uma
+com `version`, `slot`, `digest`, `deployed_at` e `healthy`:
 
 ```json
-{"app":"demo-app","active_version":"1.4.0","active_slot":"green","since":"...","retention_limit":5,"stable_versions":[{"version":"1.4.0","slot":"green","deployed_at":"...","healthy":true}]}
+{"app":"demo-app","active_version":"1.4.0","active_slot":"green","active_digest":"sha256:...","since":"...","retention_limit":5,"stable_versions":[{"version":"1.4.0","slot":"green","digest":"sha256:...","deployed_at":"...","healthy":true}]}
 ```
 
 ## app.conf
@@ -134,13 +148,15 @@ consciente e documente o motivo no PR.
 | `OPS_DEPLOY_ALERT_WEBHOOK` | vazio | Alerta crítico em falha de rollback |
 | `OPS_DEPLOY_ACTOR` | `GITHUB_ACTOR`/`id -un` | Autor no ledger |
 | `OPS_DEPLOY_COMMIT` | `GITHUB_SHA` | Commit no ledger |
+| `OPS_DEPLOY_IMAGE_DIGEST` | vazio | Digest usado por `deploy`/`bootstrap` |
+| `OPS_DEPLOY_ALLOW_MUTABLE_TAG` | `0` | `1` libera tag sem digest (legado/demo) |
 
 ## Histórico
 
 `/var/lib/ops-deploy/releases.jsonl`, uma linha JSON por evento:
 
 ```json
-{"ts":"...","app":"demo-app","version":"1.4.0","commit":"...","slot":"green","action":"deploy","result":"success","author":"ci","checksum":"...","message":"promovido para green"}
+{"ts":"...","app":"demo-app","version":"1.4.0","commit":"...","slot":"green","action":"deploy","result":"success","author":"ci","checksum":"...","digest":"sha256:...","message":"promovido para green"}
 ```
 
 ## Testes
@@ -150,4 +166,4 @@ make lint
 make test
 ```
 
-Os testes usam dublês de `docker` e `curl` em `tests/shims/`, exercitando promoção, pré-condições, reprovação por saúde, restauração de rota, rollback, versão imutável e preservação de volume.
+Os testes usam dublês de `docker` e `curl` em `tests/shims/`, exercitando promoção, pré-condições, reprovação por saúde, restauração de rota, rollback, versão/digest imutável e preservação de volume.

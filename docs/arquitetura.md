@@ -43,7 +43,7 @@ flowchart LR
 
 1. O pipeline testa, escaneia segredos e constrói a imagem `app:<versao>`.
 2. A imagem é publicada no GHCR com SBOM/proveniência; opcionalmente assinada.
-3. `ops-deploy deploy <app> <versao>` baixa a imagem imutável.
+3. `ops-deploy deploy <app> <versao> --digest sha256:<hash>` baixa a imagem por tag e digest.
 4. O slot inativo é recriado com a configuração atual e limites de segurança.
 5. O healthcheck profundo (`/health` + `status=healthy`) precisa passar.
 6. A rota do Traefik é trocada atomicamente via arquivo em `dynamic/`.
@@ -57,7 +57,7 @@ checksum da configuração. A operação é serializada por um lock.
 
 ## Fluxo de rollback
 
-`ops-deploy rollback <app> [versao]` reutiliza a imagem SemVer estável, recria o
+`ops-deploy rollback <app> [versao]` reutiliza a imagem estável pelo digest registrado, recria o
 slot de destino, valida saúde e troca a rota de volta. O rollback não desfaz
 migração de dados: compatibilidade de schema é responsabilidade da aplicação.
 

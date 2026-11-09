@@ -72,6 +72,7 @@ cat >/etc/audit/rules.d/ops-deploy.rules <<'EOF'
 -w /etc/sudoers -p wa -k sudoers
 -w /etc/sudoers.d -p wa -k sudoers
 -w /etc/ssh/sshd_config -p wa -k sshd
+-w /etc/ssh/sshd_config.d -p wa -k sshd
 -w /var/run/docker.sock -p rwa -k docker_socket
 EOF
 augenrules --load

@@ -74,7 +74,7 @@ chmod 600 "$CREDS_FILE" 2>/dev/null || true
 
 log "renderizando e implantando a stack $STACK"
 sed "s|\${DEMO_ROOT}|$DEMO_WIN|g; s|\${PLATFORM_ROOT}|$PLATFORM_WIN|g; s|\${GRAFANA_ADMIN_USER}|$GRAFANA_ADMIN_USER|g" \
-  "$DEMO_ROOT/platform.yml" >"$DEMO_ROOT/platform.rendered.yml"
+  "$DEMO_ROOT/docker-compose.yml" >"$DEMO_ROOT/platform.rendered.yml"
 docker stack deploy -c "$DEMO_WIN/platform.rendered.yml" "$STACK" >/dev/null
 
 log "aguardando o registry local"

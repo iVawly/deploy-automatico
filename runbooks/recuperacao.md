@@ -24,16 +24,27 @@ Verifique: imagem disponível no GHCR, segredos existentes, redes `public`/`inte
 
 ## Restaurar configuração
 
+A ordem importa: instale o código, restaure a configuração, recrie o `.env` e só
+então faça o bootstrap. O backup não inclui `.env` nem segredos.
+
 ```bash
-sudo RESTORE_FORCE=1 ./scripts/server/restore-config.sh \
+# 1. Se /opt/deploy-platform ainda não existe, instale a partir do clone:
+sudo /caminho/do/clone/scripts/install.sh
+
+# 2. Restaure a configuração por cima da instalação:
+sudo RESTORE_FORCE=1 /opt/deploy-platform/scripts/server/restore-config.sh \
   /var/backups/ops-deploy/ops-deploy-config-<stamp>.tar.gz
-sudo ./scripts/install.sh
-sudo ./scripts/bootstrap-platform.sh
+
+# 3. Confira/recrie o .env (DOMAIN, ACME_EMAIL, GRAFANA_ADMIN_USER):
+sudoedit /opt/deploy-platform/.env
+
+# 4. Recrie redes, segredos e a stack com a configuração restaurada:
+sudo /opt/deploy-platform/scripts/bootstrap-platform.sh
 ```
 
-O script valida o checksum, recusa caminhos absolutos/`..`, cria um backup
-`pre-restore-*` e restaura `dynamic/`, `deploy/`, `runbooks/`, `docs/` e o
-ledger de releases. Não inclui segredos nem volumes de dados.
+O script valida o checksum pelo hash, recusa caminhos absolutos/`..`, cria um
+backup `pre-restore-*` e restaura `dynamic/`, `deploy/`, `runbooks/`, `docs/` e
+o ledger de releases. Não inclui segredos nem volumes de dados.
 
 ## Restaurar dados persistentes
 
@@ -49,24 +60,28 @@ docker run --rm \
 Restauração (serviço parado):
 
 ```bash
-sudo -u deployer ops-deploy rollback <app>   # garanta uma versão saudável conhecida
-docker service scale app-<app>-blue=0 app-<app>-green=0
+sudo docker service scale app-<app>-blue=0 || true
+sudo docker service scale app-<app>-green=0 || true
 docker run --rm \
   -v demo-app-data:/data \
   -v "$PWD":/backup:ro \
   alpine sh -c 'rm -rf /data/* && tar xzf /backup/demo-app-data-<data>.tar.gz -C /data'
-sudo -u deployer ops-deploy deploy <app> <versao>
+sudo -u deployer ops-deploy recover <app>
 ```
 
+`recover` recria o slot ativo a partir do ledger restaurado, usando o digest
+registrado. Se o ledger não tiver uma release ativa, faça o primeiro deploy com
+`sudo -u deployer ops-deploy bootstrap <app> <versao> --digest sha256:<hash>`.
 Confirme a saúde e a integridade dos dados antes de liberar o tráfego.
 
 ## Recuperação total do host
 
 1. Provisione um Ubuntu 24.04 limpo.
-2. Siga `runbooks/reconstrucao-servidor.md`.
-3. Restaure os volumes a partir do backup.
-4. Revalide deploy, rollback e alertas.
-5. Registre o tempo de recuperação e as lições aprendidas.
+2. Siga `runbooks/reconstrucao-servidor.md` até instalar Docker e o código.
+3. Restaure a configuração e o `.env` antes do bootstrap da plataforma.
+4. Restaure os volumes a partir do backup.
+5. Revalide deploy, rollback e alertas.
+6. Registre o tempo de recuperação e as lições aprendidas.
 
 ## Teste periódico
 

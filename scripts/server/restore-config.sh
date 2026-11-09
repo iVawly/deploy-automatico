@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Restores a configuration backup created by backup-config.sh into a staging tree.
-# Usage: sudo RESTORE_FORCE=1 ./scripts/server/restore-config.sh <arquivo.tar.gz>
+# Usage: sudo RESTORE_FORCE=1 /opt/deploy-platform/scripts/server/restore-config.sh <arquivo.tar.gz>
 set -Eeuo pipefail
 umask 077
 
@@ -13,7 +13,10 @@ STATE_DIR="${STATE_DIR:-/var/lib/ops-deploy}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 if [[ -f "$ARCHIVE.sha256" ]]; then
-  ( cd "$(dirname "$ARCHIVE")" && sha256sum -c "$(basename "$ARCHIVE").sha256" )
+  expected="$(awk 'NR==1 {print $1}' "$ARCHIVE.sha256")"
+  actual="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+  [[ "$expected" =~ ^[0-9a-f]{64}$ && "$expected" == "$actual" ]] \
+    || { echo "ERRO: checksum de $ARCHIVE não confere." >&2; exit 1; }
 else
   echo "AVISO: checksum $ARCHIVE.sha256 não encontrado; seguindo sem verificação." >&2
 fi
@@ -60,4 +63,4 @@ if [[ -f "$STAGE/var/lib/ops-deploy/releases.jsonl" ]]; then
 fi
 
 echo "configuração restaurada em $DEST; ledger em $STATE_DIR/releases.jsonl"
-echo "rode scripts/server/install-docker.sh e scripts/bootstrap-platform.sh para reaplicar o runtime."
+echo "rode /opt/deploy-platform/scripts/server/install-docker.sh e sudo /opt/deploy-platform/scripts/bootstrap-platform.sh para reaplicar o runtime."

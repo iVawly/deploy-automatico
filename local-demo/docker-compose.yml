@@ -1,4 +1,5 @@
 # Local demo platform. Not for production: self-signed TLS and local registry.
+# Docker Swarm stack in Compose format; the filename lets Dependabot track images.
 # Images are pinned by digest so the demo is reproducible.
 services:
   registry:

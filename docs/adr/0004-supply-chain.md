@@ -8,7 +8,7 @@ origem seja verificável.
 
 ## Decisão
 
-- Aplicações usam SemVer imutável (`1.4.0`), nunca `latest`.
+- Aplicações usam SemVer imutável (`1.4.0`) com digest obrigatório no deploy, nunca `latest`.
 - Imagens de plataforma são referenciadas com digest (`imagem:tag@sha256:...`).
 - GitHub Actions são referenciadas por SHA completo.
 - O CI executa Gitleaks, Trivy, Hadolint, actionlint e testes.

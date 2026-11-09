@@ -25,9 +25,14 @@ Teste o login por chave em outra sessão antes de seguir.
 ```bash
 sudo ./scripts/server/harden-system.sh
 sudo ./scripts/server/harden-ssh.sh
-sudo usermod -aG ops <operador>
+# O script já adiciona root e o usuário que executou o sudo ao grupo ops.
+# Para outros operadores: sudo usermod -aG ops <operador>
 sudo ./scripts/server/firewall.sh
 ```
+
+O `harden-ssh.sh` aplica `AllowGroups ops` e cria
+`/etc/sudoers.d/10-ops-deploy`; root permanece como break-glass. Teste o login por
+chave em outra sessão antes de fechar a atual.
 
 Verificação: login por senha recusado; varredura externa mostra apenas
 22/80/443; `systemctl is-active fail2ban auditd` retorna `active`. Se o SSH
@@ -73,7 +78,7 @@ O `install.sh` cria `/var/lib/ops-deploy` e instala o CLI. Edite `deploy/apps/<a
 ## 5. Plataforma
 
 ```bash
-sudo ./scripts/bootstrap-platform.sh
+sudo /opt/deploy-platform/scripts/bootstrap-platform.sh
 docker stack services platform
 ```
 
@@ -97,8 +102,11 @@ upstream e reinstale de forma consciente.
 Para a aplicação piloto:
 
 ```bash
-sudo -u deployer ops-deploy bootstrap <app> <versao-inicial>
+sudo -u deployer ops-deploy bootstrap <app> <versao-inicial> --digest sha256:<hash>
 ```
+
+Se estiver recuperando um host com backup, restaure a configuração e o `.env`
+antes deste bootstrap, conforme `runbooks/recuperacao.md`.
 
 Para as demais, o primeiro deploy pode ser feito pelo pipeline após o bootstrap. Configure monitores no Uptime Kuma e valide logs no Grafana.
 

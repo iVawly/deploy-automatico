@@ -11,7 +11,7 @@
 ## Supply chain
 
 - Imagens de plataforma são fixadas por digest (`imagem:tag@sha256:...`); atualizações chegam por PR do Dependabot.
-- Imagens de aplicação usam SemVer imutável e são construídas no CI a partir do commit revisado.
+- Imagens de aplicação usam SemVer com digest obrigatório no deploy e são construídas no CI a partir do commit revisado.
 - O CI executa gitleaks, Trivy (filesystem e imagem), Hadolint, ShellCheck, actionlint e testes.
 - O workflow de publicação gera SBOM e atestação de proveniência; quando habilitado, assina a imagem com Cosign keyless.
 - GitHub Actions são referenciadas por SHA completo; tags móveis não são aceitas em `main`.
@@ -43,7 +43,7 @@ Montagem padrão em `/run/secrets/<nome>`, em tmpfs. Para o serviço receber seg
 
 1. Crie o segredo com sufixo de versão (`_v2`).
 2. Atualize `deploy/apps/<app>/app.conf` para o novo nome.
-3. `sudo -u deployer ops-deploy deploy <app> <mesma-versao>` (a imagem é reutilizada).
+3. `sudo -u deployer ops-deploy deploy <app> <mesma-versao> --digest <digest-ativo>` (a imagem é reutilizada).
 4. Valide `ops-deploy verify <app>`.
 5. Remova o segredo antigo após a janela de segurança.
 
@@ -51,7 +51,8 @@ Montagem padrão em `/run/secrets/<nome>`, em tmpfs. Para o serviço receber seg
 
 - SSH apenas por chave; senha e autenticação interativa desabilitadas (`scripts/server/harden-ssh.sh`).
 - Root não faz login por senha (`prohibit-password`).
-- Grupo `ops` para sudo; revise trimestralmente.
+- SSH restrito ao grupo `ops` (`AllowGroups ops`); root entra no grupo como break-glass.
+- Grupo `ops` tem sudo via `/etc/sudoers.d/10-ops-deploy` (senha local exigida, salvo regra específica de usuário já existente); revise trimestralmente.
 - Firewall padrão nega entrada e tráfego roteado, libera somente 22/80/443; SSH tem rate limit.
 - `harden-system.sh` aplica sysctl, journald persistente, auditd, fail2ban e atualizações de segurança automáticas.
 - Remova a chave do usuário em `~/.ssh/authorized_keys` ao desligar um integrante e teste a recusa.

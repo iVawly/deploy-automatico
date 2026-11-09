@@ -20,8 +20,25 @@ Versionamento SemVer para o CLI e para a plataforma.
 - Host com sysctl, auditd, fail2ban, journald persistente e atualizações
   automáticas.
 - Backup com checksum/retenção e restore com validação de caminho.
+- `ops-deploy deploy`/`bootstrap` exigem digest (`sha256:...`); o ledger registra
+  o digest e o pipeline passa o digest do build.
 - CI com Gitleaks, Trivy, Hadolint, actionlint, testes e smoke test da imagem;
   CodeQL, Scorecard, Dependabot e ações fixadas por SHA.
+
+- SSH endurecido com drop-in `00-ops-deploy.conf` (vence o `50-cloud-init.conf`),
+  `AllowGroups ops`, remoção do `99-` legado e sudo do grupo `ops` em
+  `/etc/sudoers.d/10-ops-deploy` validado por `visudo`; o prefixo `10-` preserva
+  regra NOPASSWD específica de operador sem senha (ex.: usuário do cloud-init).
+- Dependabot passou a acompanhar as imagens das stacks `deploy` e `local-demo`.
+
+### Fixed
+
+- CLI instalado por symlink resolve o repositório em `/opt/deploy-platform`.
+- Bootstrap funciona a partir do diretório instalado, independente do `cwd`.
+- Workflow de deploy do `demo-app` na raiz do monorepo (tag `demo-app-v*`).
+- Runbook de recuperação restaura configuração/`.env` antes do bootstrap e usa
+  `recover` após restaurar o volume.
+- Checksum de backup usa nome relativo e o restore compara apenas o hash.
 
 ### Added
 
@@ -36,6 +53,8 @@ Versionamento SemVer para o CLI e para a plataforma.
 
 ### Changed
 
+- Stacks renomeadas para `deploy/docker-compose.yml` e
+  `local-demo/docker-compose.yml` para o Dependabot acompanhar as imagens.
 - `ops-deploy` 1.1.0 aplica hardening padrão aos serviços.
 - README reescrito para quickstart, arquitetura, segurança e limites.
 - `docs/seguranca.md`, `docs/observabilidade.md`, `docs/ops-deploy.md` e

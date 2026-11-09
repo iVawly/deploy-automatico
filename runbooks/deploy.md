@@ -20,13 +20,15 @@ Toda entrega de uma nova versão de aplicação em produção. Deploy manual no 
    ```bash
    git checkout main
    git pull
-   git tag -a v1.4.0 -m "release 1.4.0"
-   git push origin v1.4.0
+   git tag -a demo-app-v1.4.0 -m "release 1.4.0"
+   git push origin demo-app-v1.4.0
    ```
 
-3. Acompanhe o workflow em GitHub → Actions → `deploy`.
+   No repositório próprio do app, use a tag `v1.4.0` e o workflow `deploy`.
+
+3. Acompanhe o workflow em GitHub → Actions → `deploy-demo-app`.
    - Etapa `test`: gitleaks + testes. Falha aqui encerra o processo.
-   - Etapa `build-and-deploy`: build, push no GHCR e `ops-deploy deploy demo-app 1.4.0`.
+   - Etapa `build-and-deploy`: build, push no GHCR e `ops-deploy deploy demo-app 1.4.0 --digest <digest>`.
 
 4. Confirme a versão ativa:
 
@@ -55,7 +57,7 @@ Consulte `runbooks/incidentes.md` se o serviço ativo estiver indisponível.
 ## Primeira instalação de uma aplicação
 
 ```bash
-sudo -u deployer ops-deploy bootstrap <app> 1.0.0
+sudo -u deployer ops-deploy bootstrap <app> 1.0.0 --digest sha256:<hash>
 ```
 
 Depois disso, todo deploy passa pelo pipeline. O bootstrap só deve ser usado uma vez por aplicação.

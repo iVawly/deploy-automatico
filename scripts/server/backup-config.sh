@@ -19,7 +19,7 @@ fi
 tar czf "$OUT" "${tar_args[@]}"
 tar tzf "$OUT" >/dev/null
 
-sha256sum "$OUT" > "$OUT.sha256"
+( cd "$BACKUP_DIR" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256" )
 chmod 600 "$OUT" "$OUT.sha256"
 
 find "$BACKUP_DIR" -maxdepth 1 -type f -name 'ops-deploy-config-*.tar.gz*' \

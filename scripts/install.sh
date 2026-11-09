@@ -31,7 +31,9 @@ if [[ "$(cd "$ROOT" && pwd -P)" != "$(cd "$DEST" && pwd -P)" ]]; then
     . | tar -C "$DEST" -xf -
 fi
 
-install -m 0755 "$ROOT/scripts/ops-deploy" /usr/local/bin/ops-deploy
+install -d -m 0755 /usr/local/bin
+chmod 0755 "$DEST/scripts/ops-deploy"
+ln -sfn "$DEST/scripts/ops-deploy" /usr/local/bin/ops-deploy
 install -d -o deployer -g deployer -m 0750 "$DEST/dynamic"
 chown -R deployer:deployer "$STATE_DIR"
 
@@ -43,4 +45,4 @@ fi
 
 echo "instalado em $DEST"
 echo "CLI: /usr/local/bin/ops-deploy"
-echo "próximo passo: revise $DEST/.env e execute scripts/bootstrap-platform.sh"
+echo "próximo passo: revise $DEST/.env e execute sudo $DEST/scripts/bootstrap-platform.sh"
