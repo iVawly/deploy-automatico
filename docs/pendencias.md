@@ -98,6 +98,6 @@ Legenda: `[x]` resolvido (com validação)
 
 ## Histórico
 
-- 2026-11-09: arquivo criado a partir da verificação do commit `18f84b1`.
-- 2026-11-10: altos, médios e baixos resolvidos e validados com `shellcheck`,
+- 2026-09-11: arquivo criado a partir da verificação do commit `18f84b1`.
+- 2026-10-11: altos, médios e baixos resolvidos e validados com `shellcheck`,
   `bash -n`, `bats` (22 testes), `python3 -m unittest` (7 testes) e `yamllint`.
