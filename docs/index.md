@@ -32,6 +32,7 @@
 - [Observabilidade](observabilidade.md)
 - [Segurança](seguranca.md)
 - [Propriedade e escalonamento](ownership.md)
+- [Pendências de auditoria](pendencias.md)
 - [Aceite](aceite.md)
 - [Política de segurança](../SECURITY.md)
 - [Contribuição](../CONTRIBUTING.md)

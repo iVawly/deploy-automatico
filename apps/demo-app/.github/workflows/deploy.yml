@@ -51,7 +51,7 @@ jobs:
           python-version: "3.12"
 
       - name: Tests
-        run: python -m unittest discover -s tests -v
+        run: env PYTHONPATH=. python3 -m unittest discover -s tests -v
 
   build-and-deploy:
     needs: test
@@ -67,9 +67,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Resolve version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            version="${{ inputs.version }}"
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
+            version="$INPUT_VERSION"
           else
             version="${GITHUB_REF_NAME#v}"
           fi

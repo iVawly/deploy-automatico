@@ -13,6 +13,13 @@ OUT="$BACKUP_DIR/ops-deploy-config-$STAMP.tar.gz"
 mkdir -p "$BACKUP_DIR"
 
 tar_args=(-C "$ROOT" dynamic deploy runbooks docs)
+if [[ "${BACKUP_INCLUDE_ENV:-0}" == "1" ]]; then
+  if [[ -f "$ROOT/.env" ]]; then
+    tar_args+=(.env)
+  else
+    echo "AVISO: BACKUP_INCLUDE_ENV=1, mas $ROOT/.env não existe" >&2
+  fi
+fi
 if [[ -f /var/lib/ops-deploy/releases.jsonl ]]; then
   tar_args+=(-C / var/lib/ops-deploy/releases.jsonl)
 fi
@@ -28,3 +35,6 @@ find "$BACKUP_DIR" -maxdepth 1 -type f -name 'ops-deploy-config-*.tar.gz*' \
 echo "backup criado: $OUT"
 echo "checksum:     $OUT.sha256"
 echo "copie ambos para fora do servidor; o arquivo contém metadados de deploy, não segredos."
+if [[ "${BACKUP_INCLUDE_ENV:-0}" == "1" ]]; then
+  echo "ATENÇÃO: este backup inclui .env com segredos; armazene-o cifrado e restrinja o acesso."
+fi

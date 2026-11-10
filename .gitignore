@@ -14,7 +14,6 @@ dynamic/*.yml
 # Local demo runtime data
 local-demo/dynamic/*.yml
 !local-demo/dynamic/.gitkeep
-!local-demo/dynamic/platform.yml
 local-demo/state/
 local-demo/platform.rendered.yml
 

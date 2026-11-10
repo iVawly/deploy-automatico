@@ -44,8 +44,10 @@ tar xzf "$ARCHIVE" -C "$STAGE"
 
 mkdir -p "$DEST" "$STATE_DIR" /var/backups/ops-deploy
 if [[ -d "$DEST/dynamic" || -d "$DEST/deploy" ]]; then
+  pre_items=(dynamic deploy runbooks docs)
+  [[ -f "$DEST/.env" ]] && pre_items+=(.env)
   tar czf "/var/backups/ops-deploy/pre-restore-$STAMP.tar.gz" \
-    -C "$DEST" dynamic deploy runbooks docs 2>/dev/null || true
+    -C "$DEST" "${pre_items[@]}" 2>/dev/null || true
 fi
 if [[ -f "$STATE_DIR/releases.jsonl" ]]; then
   cp -a "$STATE_DIR/releases.jsonl" "/var/backups/ops-deploy/releases-pre-restore-$STAMP.jsonl"
@@ -56,6 +58,12 @@ for item in dynamic deploy runbooks docs; do
   rm -rf "${DEST:?}/$item"
   cp -a "$STAGE/$item" "$DEST/$item"
 done
+
+if [[ -f "$STAGE/.env" ]]; then
+  install -m 0600 "$STAGE/.env" "$DEST/.env"
+  chown root:root "$DEST/.env" 2>/dev/null || true
+  echo "AVISO: .env restaurado do backup; confira DOMAIN, ACME_EMAIL e segredos." >&2
+fi
 
 if [[ -f "$STAGE/var/lib/ops-deploy/releases.jsonl" ]]; then
   install -m 0600 "$STAGE/var/lib/ops-deploy/releases.jsonl" "$STATE_DIR/releases.jsonl"

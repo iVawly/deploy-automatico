@@ -1,4 +1,6 @@
 # Local demo routes. TLS uses the Traefik default self-signed certificate.
+# Rendered by local-demo/scripts/up.sh using the Swarm stack name.
+# Do not edit dynamic/platform.yml directly.
 http:
   routers:
     traefik-dashboard:
@@ -33,11 +35,12 @@ http:
     uptime-kuma:
       loadBalancer:
         servers:
-          - url: "http://uptime-kuma:3001"
+          # Stack-scoped DNS names avoid collisions on shared overlay networks.
+          - url: "http://${STACK}_uptime-kuma:3001"
     grafana:
       loadBalancer:
         servers:
-          - url: "http://grafana:3000"
+          - url: "http://${STACK}_grafana:3000"
   middlewares:
     dashboard-auth:
       basicAuth:

@@ -24,10 +24,10 @@ test: test-python
 	$(BATS) tests
 
 test-python:
-	PYTHONPATH=apps/demo-app python -m unittest discover -s apps/demo-app/tests -v
+	PYTHONPATH=apps/demo-app python3 -m unittest discover -s apps/demo-app/tests -v
 
 lint:
-	$(SHELLCHECK) scripts/ops-deploy scripts/*.sh scripts/server/*.sh local-demo/scripts/*.sh tests/shims/*
+	$(SHELLCHECK) scripts/ops-deploy scripts/*.sh scripts/ci/*.sh scripts/server/*.sh local-demo/scripts/*.sh tests/shims/*
 	while IFS= read -r -d '' file; do bash -n "$$file"; done < <(find scripts local-demo/scripts tests -type f \( -name '*.sh' -o -name 'ops-deploy' \) -print0)
 
 lint-yaml:

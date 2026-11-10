@@ -59,17 +59,18 @@ Nunca grave segredos no Git. Mantenha-os no cofre da equipe.
 
 ### 2.1 Opção A: VPS com cloud-init
 
-Copie o template e substitua a chave pública:
+Copie o template e substitua a chave pública e o commit que será homologado:
 
 ```bash
+REPO_COMMIT="$(git rev-parse HEAD)"   # execute no clone local a homologar
 cp scripts/homologacao/cloud-init.yaml /tmp/homologacao.yaml
-sed -i "s|REPLACE_WITH_SSH_PUBLIC_KEY|$(cat ~/.ssh/id_ed25519.pub)|" /tmp/homologacao.yaml
+sed -i "s|REPLACE_WITH_SSH_PUBLIC_KEY|$(cat ~/.ssh/id_ed25519.pub)|; s|REPLACE_WITH_COMMIT_SHA|$REPO_COMMIT|" /tmp/homologacao.yaml
 ```
 
 Use `/tmp/homologacao.yaml` como user-data na criação da VPS. O cloud-init
 cria o usuário `ops`, instala os pacotes básicos e clona o repositório em
-`/opt/deploy-platform-src`. Ele não mexe no SSH nem no firewall para evitar
-lockout.
+`/opt/deploy-platform-src` já no commit pinado. Ele não mexe no SSH nem no
+firewall para evitar lockout.
 
 Com Multipass local (sem IP público, útil apenas para smoke test):
 
@@ -96,7 +97,8 @@ Teste o login por chave em outra sessão antes de continuar.
 
 ### 2.3 Clonar o repositório
 
-Se usou o cloud-init da seção 2.1, o clone já existe; pule para o checkout.
+Se usou o cloud-init da seção 2.1, o clone já existe no commit pinado; pule para
+a seção 3.
 
 ```bash
 sudo apt-get update

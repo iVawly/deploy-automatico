@@ -34,7 +34,7 @@ flowchart LR
 | Slots blue/green | Duas cópias do serviço da aplicação | volume da aplicação |
 | Grafana | Consulta de logs | `grafana_data` |
 | Loki | Armazenamento de logs | `loki_data` |
-| Alloy | Coleta de logs via API Docker | `alloy_data` |
+| Alloy | Coleta logs dos containers via API Docker e `pipeline.jsonl` do host | `alloy_data` |
 | Uptime Kuma | Disponibilidade e alertas | `uptime_data` |
 | GHCR | Imagens imutáveis | externo |
 | Runner | Executa CI/CD no host | `/opt/actions-runner` |
@@ -77,7 +77,9 @@ migração de dados: compatibilidade de schema é responsabilidade da aplicaçã
 | Falha | Comportamento esperado |
 |---|---|
 | Imagem nova não sobe | deploy falha antes da troca de rota; slot saudável continua ativo |
-| Healthcheck falha | rollback automático da rota; alerta no ledger/webhook |
+| Healthcheck falha antes da troca | candidato é reduzido; rota não muda; falha registrada no ledger (sem webhook) |
+| Validação pública falha após a troca | rota anterior é restaurada e o slot novo é reduzido; falha registrada no ledger (sem webhook) |
+| Rollback falha após a troca | versão restaurada é mantida para diagnóstico e um alerta crítico é enviado ao webhook configurado |
 | Traefik reinicia | rotas vêm do file provider; serviços continuam |
 | Loki/Alloy indisponível | aplicação e deploy continuam; perda de logs durante a janela |
 | Disco cheio | monitor de disco alerta; Loki tem retenção e compactor |

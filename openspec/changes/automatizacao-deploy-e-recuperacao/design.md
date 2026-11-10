@@ -87,7 +87,7 @@ O runner é instalado como serviço systemd sob o usuário `deployer`, no mesmo 
 
 ### 5. CLI de deploy: um único ponto de operação
 
-Um CLI em Bash (`ops-deploy`) versionado no repositório de infraestrutura, instalado em `/usr/local/bin`, com subcomandos `deploy`, `rollback`, `status`, `verify` e `promote`. Ele encapsula: seleção de slot, atualização do serviço, espera de saúde, troca de rota, registro de release e validações de segurança (por exemplo, recusar imagem sem versão imutável).
+Um CLI em Bash (`ops-deploy`) versionado no repositório de infraestrutura, instalado em `/usr/local/bin`, com subcomandos `deploy`, `rollback`, `status`, `verify`, `bootstrap` e `recover`. A promoção acontece dentro de `deploy`, após a verificação de saúde e a troca de rota; não existe subcomando separado. Ele encapsula: seleção de slot, atualização do serviço, espera de saúde, troca de rota, registro de release e validações de segurança (por exemplo, recusar imagem sem versão imutável).
 
 **Por quê:** concentra a lógica crítica em um artefato testável e versionado, evita comandos longos e divergentes nos runbooks e dá à equipe um contrato estável.
 
@@ -162,7 +162,7 @@ O usuário `deployer` do runner tem acesso ao socket Docker por necessidade de d
 
 ### 11. Registro de releases e retenção
 
-Cada deploy grava uma linha em `/var/lib/ops-deploy/releases.jsonl` com aplicação, versão, commit, slot, autor, horário, resultado e checksum da configuração. O CLI usa esse registro para `status` e para escolher a versão de rollback, mantendo as 5 últimas versões estáveis com imagem preservada no registro.
+Cada deploy grava uma linha em `/var/lib/ops-deploy/releases.jsonl` com aplicação, versão, commit, slot, autor, horário, resultado e checksum da configuração. O CLI usa esse registro para `status` e para escolher a versão de rollback, mantendo as 5 últimas versões estáveis no ledger. A retenção de tags/imagens no GHCR é uma política separada do registry e não é garantida pelo ledger.
 
 **Por quê:** histórico auditável independente do GitHub, consultável no servidor e suficiente para o procedimento de rollback documentado.
 

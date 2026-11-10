@@ -21,7 +21,7 @@
 
 - Slots de aplicação: rootfs read-only, `cap-drop ALL`, `/tmp` em tmpfs, limites de CPU/memória/PIDs e rotação de logs.
 - Plataforma: rootfs read-only onde suportado, capabilities mínimas e limites de recursos.
-- O Docker Swarm 29.8 não expõe `no-new-privileges` no CLI de serviço; a defesa efetiva vem de usuário não-root, rootfs read-only, `cap-drop ALL` e socket proxy.
+- Slots de aplicação usam `--security-opt no-new-privileges:true` além de usuário não-root, rootfs read-only, `cap-drop ALL` e socket proxy.
 - Alloy não monta `/var/run/docker.sock`; fala com `docker-socket-proxy` em rede interna, com API somente leitura.
 - O dashboard do Traefik exige basic auth; Grafana e Uptime Kuma nunca são expostos sem TLS.
 - TLS mínimo 1.2, HSTS, `nosniff`, `frameDeny` e rate limit por IP no edge.
@@ -30,7 +30,7 @@
 
 ```bash
 # criar (o valor nunca é passado por argumento de linha de comando)
-openssl rand -base64 32 | docker secret create demo_app_database_url -
+printf '%s' "$(openssl rand -base64 32)" | docker secret create demo_app_database_url -
 printf '%s' '<valor>' | docker secret create demo_app_database_url_v2 -
 
 # usar em app.conf
@@ -53,7 +53,7 @@ Montagem padrão em `/run/secrets/<nome>`, em tmpfs. Para o serviço receber seg
 - Root não faz login por senha (`prohibit-password`).
 - SSH restrito ao grupo `ops` (`AllowGroups ops`); root entra no grupo como break-glass.
 - Grupo `ops` tem sudo via `/etc/sudoers.d/10-ops-deploy` (senha local exigida, salvo regra específica de usuário já existente); revise trimestralmente.
-- Firewall padrão nega entrada e tráfego roteado, libera somente 22/80/443; SSH tem rate limit.
+- Firewall padrão nega entrada e tráfego roteado, libera somente 22/80/443; SSH tem rate limit. Em cluster multi-node, defina `SWARM_CIDR` para liberar 2377/tcp, 7946/tcp+udp e 4789/udp apenas para a rede do cluster.
 - `harden-system.sh` aplica sysctl, journald persistente, auditd, fail2ban e atualizações de segurança automáticas.
 - Remova a chave do usuário em `~/.ssh/authorized_keys` ao desligar um integrante e teste a recusa.
 

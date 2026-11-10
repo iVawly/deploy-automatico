@@ -6,15 +6,31 @@ export MSYS_NO_PATHCONV=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEMO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLATFORM_ROOT="$(cd "$DEMO_ROOT/.." && pwd)"
-DEMO_WIN="$(cygpath -m "$DEMO_ROOT")"
-PLATFORM_WIN="$(cygpath -m "$PLATFORM_ROOT")"
+
+to_host_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+escape_sed_replacement() {
+  printf '%s' "$1" | sed 's/[\\&|]/\\&/g'
+}
+
+DEMO_WIN="$(to_host_path "$DEMO_ROOT")"
+PLATFORM_WIN="$(to_host_path "$PLATFORM_ROOT")"
 STACK="${DEMO_STACK:-demo-platform}"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-command -v docker >/dev/null 2>&1 || die "docker não encontrado"
-command -v cygpath >/dev/null 2>&1 || die "execute no Git Bash"
+[[ "$STACK" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "DEMO_STACK inválido: $STACK"
+
+for cmd in docker curl openssl; do
+  command -v "$cmd" >/dev/null 2>&1 || die "comando obrigatório não encontrado: $cmd"
+done
 docker info >/dev/null 2>&1 || die "Docker Desktop não está rodando"
 
 log "verificando Swarm"
@@ -52,7 +68,7 @@ GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-$(openssl rand -base64 24 | tr
 
 if ! docker secret inspect traefik_dashboard_users >/dev/null 2>&1; then
   log "criando segredo do dashboard (usuário $TRAEFIK_ADMIN_USER)"
-  hash="$(printf '%s\n' "$TRAEFIK_ADMIN_PASSWORD" | openssl passwd -apr1 -stdin)"
+  hash="$(printf '%s' "$TRAEFIK_ADMIN_PASSWORD" | openssl passwd -apr1 -stdin)"
   printf '%s:%s\n' "$TRAEFIK_ADMIN_USER" "$hash" | docker secret create traefik_dashboard_users - >/dev/null
 fi
 if ! docker secret inspect grafana_admin_password >/dev/null 2>&1; then
@@ -73,18 +89,23 @@ mkdir -p "$DEMO_ROOT/state"
 chmod 600 "$CREDS_FILE" 2>/dev/null || true
 
 log "renderizando e implantando a stack $STACK"
-sed "s|\${DEMO_ROOT}|$DEMO_WIN|g; s|\${PLATFORM_ROOT}|$PLATFORM_WIN|g; s|\${GRAFANA_ADMIN_USER}|$GRAFANA_ADMIN_USER|g" \
+sed "s|\${DEMO_ROOT}|$(escape_sed_replacement "$DEMO_WIN")|g; s|\${PLATFORM_ROOT}|$(escape_sed_replacement "$PLATFORM_WIN")|g; s|\${GRAFANA_ADMIN_USER}|$(escape_sed_replacement "$GRAFANA_ADMIN_USER")|g" \
   "$DEMO_ROOT/docker-compose.yml" >"$DEMO_ROOT/platform.rendered.yml"
+sed "s|\${STACK}|$STACK|g" \
+  "$DEMO_ROOT/dynamic/platform.yml.tpl" >"$DEMO_ROOT/dynamic/platform.yml"
+if grep -Fq "\${STACK}" "$DEMO_ROOT/dynamic/platform.yml"; then
+  die "falha ao renderizar $DEMO_ROOT/dynamic/platform.yml: placeholder STACK restante"
+fi
 docker stack deploy -c "$DEMO_WIN/platform.rendered.yml" "$STACK" >/dev/null
 
 log "aguardando o registry local"
 for _ in $(seq 1 60); do
-  if curl -fsS http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+  if curl -fsS --max-time 5 http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
-curl -fsS http://127.0.0.1:5000/v2/ >/dev/null 2>&1 || die "registry não respondeu na porta 5000"
+curl -fsS --max-time 5 http://127.0.0.1:5000/v2/ >/dev/null 2>&1 || die "registry não respondeu na porta 5000"
 
 log "construindo e publicando imagens da aplicação"
 docker build -t 127.0.0.1:5000/demo-app:1.0.0 "$PLATFORM_WIN/apps/demo-app" >/dev/null
@@ -96,12 +117,15 @@ for version in 1.0.0 1.0.1 2.0.0; do
 done
 
 log "aguardando o Traefik"
+traefik_ready=0
 for _ in $(seq 1 60); do
-  if curl -ksS https://traefik.127.0.0.1.nip.io/ -o /dev/null 2>/dev/null; then
+  if curl -ksS --max-time 5 https://traefik.127.0.0.1.nip.io/ -o /dev/null 2>/dev/null; then
+    traefik_ready=1
     break
   fi
   sleep 2
 done
+[[ "$traefik_ready" == "1" ]] || die "Traefik não respondeu em https://traefik.127.0.0.1.nip.io/"
 
 if bash "$DEMO_ROOT/scripts/ops" status demo-app --json 2>/dev/null | grep -q '"active_version":""'; then
   log "primeiro deploy (bootstrap 1.0.0)"

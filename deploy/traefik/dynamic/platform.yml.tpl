@@ -37,11 +37,12 @@ http:
     uptime-kuma:
       loadBalancer:
         servers:
-          - url: "http://uptime-kuma:3001"
+          # Stack-scoped DNS names avoid collisions on shared overlay networks.
+          - url: "http://platform_uptime-kuma:3001"
     grafana:
       loadBalancer:
         servers:
-          - url: "http://grafana:3000"
+          - url: "http://platform_grafana:3000"
   middlewares:
     dashboard-auth:
       basicAuth:

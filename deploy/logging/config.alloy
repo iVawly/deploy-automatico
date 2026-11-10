@@ -38,6 +38,23 @@ loki.source.docker "containers" {
   forward_to    = [loki.write.default.receiver]
 }
 
+// Pipeline executions are written as JSONL by scripts/ci/log-exec.sh on the host.
+// The directory is mounted read-only into this container by the platform stack.
+local.file_match "pipeline" {
+  path_targets = [
+    {
+      "__path__" = "/var/log/ops-deploy/*.jsonl",
+      app        = "pipeline",
+      source     = "pipeline",
+    },
+  ]
+}
+
+loki.source.file "pipeline" {
+  targets    = local.file_match.pipeline.targets
+  forward_to = [loki.write.default.receiver]
+}
+
 loki.write "default" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"

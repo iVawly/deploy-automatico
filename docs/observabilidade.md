@@ -13,7 +13,9 @@ Substitua `<DOMAIN>` pelo valor de `DOMAIN` em `.env`.
 Cadastre dois monitores no Uptime Kuma para cada aplicação:
 
 1. **Disponibilidade pública** — `HTTPS`, URL `https://<APP_DOMAIN>/`, intervalo 30s, retries 3 (alerta após ~90s), palavra-chave opcional do serviço quando conhecida.
-2. **Saúde profunda** — `HTTP`, URL `http://traefik:8081/health`, cabeçalho `Host: <APP_DOMAIN>`, intervalo 30s, retries 3 (alerta após ~90s), palavra-chave `"status":"healthy"`.
+2. **Saúde profunda** — `HTTP`, URL `http://platform_traefik:8081/health`, cabeçalho `Host: <APP_DOMAIN>`, intervalo 30s, retries 3 (alerta após ~90s), palavra-chave `"status":"healthy"`.
+
+Use sempre o nome qualificado pela stack (`platform_<servico>`) nos monitores internos. O nome curto pode colidir com outro serviço na rede `public`. No demo local, a stack padrão é `demo-platform`, então o host é `demo-platform_traefik`.
 
 A porta 8081 não é publicada no host: só containers da rede `public` alcançam o entrypoint interno de saúde.
 
@@ -38,16 +40,37 @@ Use **Test Notification** no canal antes de considerar a configuração concluí
 {app="demo-app"}
 {app="demo-app", version="1.4.0"} | json | level="error"
 {app="demo-app"} | json | request_id="<id>"
-{service="demo-app"} | json | duration_ms > 1000
+{app="demo-app"} | json | duration_ms > 1000
 {app="demo-app"} |~ "unhealthy|timeout|connection refused"
 ```
 
-Filtros por rótulo: `app`, `slot`, `version`, `service`, `container`.
+Filtros por rótulo: `app` (aplicação lógica), `slot`, `version`, `service`
+(nome real do serviço no Swarm, como `app-demo-app-green`), `container` e
+`source` (`pipeline` para execuções de CI).
+
+## Logs do pipeline
+
+As etapas de deploy e verify do GitHub Actions rodam através de
+`scripts/ci/log-exec.sh`, que grava cada linha como JSONL em
+`/var/log/ops-deploy/pipeline.jsonl`. O Alloy monta esse diretório em modo
+somente leitura e envia os registros ao Loki com `app="pipeline"` e
+`source="pipeline"`.
+
+```logql
+{app="pipeline"} | json
+{app="pipeline"} | json | stage="deploy"
+{app="pipeline"} | json | run_id="<run-id>"
+```
+
+O filtro `| json` extrai `stage`, `run_id`, `commit` e `message` do registro. Os
+logs das ações de build (buildx, Trivy, Cosign) continuam disponíveis no GitHub
+Actions; o wrapper cobre as operações executadas no servidor.
 
 ## Retenção e disco
 
 - Loki: 720h (30 dias) com compactor habilitado (`deploy/logging/loki-config.yml`).
 - Logs de aplicação chegam em até 30s (Alloy lê a API do Docker via `docker-socket-proxy`, sem montar o socket bruto).
+- `/var/log/ops-deploy/*.jsonl` é rotacionado semanalmente pelo logrotate criado por `scripts/install.sh`; a retenção consultável fica no Loki.
 - Alerta de disco: crie um monitor **Push** no Uptime Kuma e agende
 
   ```cron

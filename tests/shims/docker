@@ -24,13 +24,14 @@ case "$cmd" in
         [[ -f "$SHIM_STATE/services/$name" ]]
         ;;
       create)
+        [[ "${SHIM_DOCKER_FAIL_CREATE:-}" == "1" ]] && exit 1
         name=""
         image=""
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --name) name="$2"; shift 2 ;;
-            --label | --container-label | --env | --secret | --mount | --network | --replicas | --update-order | --restart-condition) shift 2 ;;
-            --detach | --quiet | --with-registry-auth) shift ;;
+            --label | --container-label | --env | --secret | --mount | --network | --replicas | --update-order | --restart-condition | --security-opt | --cap-drop | --limit-memory | --limit-cpu | --limit-pids | --stop-grace-period | --log-driver | --log-opt) shift 2 ;;
+            --detach | --quiet | --with-registry-auth | --init | --read-only) shift ;;
             *) image="$1"; shift ;;
           esac
         done

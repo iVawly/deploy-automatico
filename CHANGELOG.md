@@ -55,7 +55,9 @@ Versionamento SemVer para o CLI e para a plataforma.
 
 - Stacks renomeadas para `deploy/docker-compose.yml` e
   `local-demo/docker-compose.yml` para o Dependabot acompanhar as imagens.
-- `ops-deploy` 1.1.0 aplica hardening padrão aos serviços.
+- `ops-deploy` 1.2.0 aplica hardening padrão aos serviços, usa retry com
+  backoff em operações Docker, exige digest e lista versões estáveis no
+  `status`.
 - README reescrito para quickstart, arquitetura, segurança e limites.
 - `docs/seguranca.md`, `docs/observabilidade.md`, `docs/ops-deploy.md` e
   runbooks atualizados.

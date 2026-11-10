@@ -8,7 +8,7 @@ CLI em Bash para deploy blue-green em Docker Swarm de nó único. É o único po
 sudo ./scripts/install.sh
 ```
 
-Instala em `/opt/deploy-platform`, cria `/var/lib/ops-deploy` (dono `deployer`) e o link `/usr/local/bin/ops-deploy` para o CLI instalado. A configuração de cada aplicação fica em `deploy/apps/<app>/app.conf`.
+Instala em `/opt/deploy-platform`, cria `/var/lib/ops-deploy` e `/var/log/ops-deploy` (donos `deployer`) e o link `/usr/local/bin/ops-deploy` para o CLI instalado. A configuração de cada aplicação fica em `deploy/apps/<app>/app.conf`.
 
 ## Subcomandos
 
@@ -91,7 +91,8 @@ sudo -u deployer ops-deploy status demo-app --json
 ```
 
 O JSON inclui `active_digest`, `retention_limit` e `stable_versions`, cada uma
-com `version`, `slot`, `digest`, `deployed_at` e `healthy`:
+com `version`, `slot`, `digest`, `deployed_at` e `healthy` (saúde registrada no
+deploy, não uma sonda ao vivo):
 
 ```json
 {"app":"demo-app","active_version":"1.4.0","active_slot":"green","active_digest":"sha256:...","since":"...","retention_limit":5,"stable_versions":[{"version":"1.4.0","slot":"green","digest":"sha256:...","deployed_at":"...","healthy":true}]}
@@ -130,8 +131,8 @@ com `version`, `slot`, `digest`, `deployed_at` e `healthy`:
 ## Hardening do serviço
 
 Cada slot é criado com rootfs read-only, todas as
-capabilities removidas, `/tmp` em tmpfs, limites de CPU/memória/PIDs,
-`init` como PID 1, `stop-grace-period` e rotação de logs. A aplicação deve
+capabilities removidas, `no-new-privileges`, `/tmp` em tmpfs, limites de
+CPU/memória/PIDs, `init` como PID 1, `stop-grace-period` e rotação de logs. A aplicação deve
 gravar apenas no volume montado em `APP_MOUNT_PATH` (padrão `/data`). Se a
 imagem precisar de rootfs gravável, defina `APP_READ_ONLY=0` de forma
 consciente e documente o motivo no PR.
@@ -143,6 +144,7 @@ consciente e documente o motivo no PR.
 | `OPS_DEPLOY_STATE_DIR` | `/var/lib/ops-deploy` | Ledger `releases.jsonl` e lock |
 | `OPS_DEPLOY_DYNAMIC_DIR` | `<root>/dynamic` | Rotas do Traefik |
 | `OPS_DEPLOY_PROBE_MODE` | `docker` | `local` usa curl do host (testes) |
+| `OPS_DEPLOY_PROXY_HOST` | `platform_traefik` | DNS do proxy na rede overlay |
 | `OPS_DEPLOY_DRY_RUN` | `0` | Apenas registra comandos mutantes |
 | `OPS_DEPLOY_DRAIN_SECONDS` | `10` | Janela antes de reduzir o slot anterior |
 | `OPS_DEPLOY_ALERT_WEBHOOK` | vazio | Alerta crítico em falha de rollback |

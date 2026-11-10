@@ -199,6 +199,7 @@ services:
     volumes:
       - ${DEPLOY_ROOT}/deploy/logging/config.alloy:/etc/alloy/config.alloy:ro
       - alloy_data:/var/lib/alloy/data
+      - /var/log/ops-deploy:/var/log/ops-deploy:ro
       - /tmp
     networks:
       - internal

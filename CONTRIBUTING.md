@@ -13,7 +13,7 @@ Requisitos:
 - opcional: `pre-commit`, `hadolint`, `actionlint`, `gitleaks`, `trivy`.
 
 ```bash
-python -m unittest discover -s apps/demo-app/tests -v
+python3 -m unittest discover -s apps/demo-app/tests -v
 make lint
 make test
 make lint-yaml

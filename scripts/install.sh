@@ -14,7 +14,20 @@ id deployer >/dev/null 2>&1 || {
 }
 
 install -d -m 0755 "$DEST" "$DEST/dynamic" /var/backups/ops-deploy
-install -d -o deployer -g deployer -m 0750 "$STATE_DIR"
+install -d -o deployer -g deployer -m 0750 "$STATE_DIR" /var/log/ops-deploy
+
+if [[ -d /etc/logrotate.d ]]; then
+  cat >/etc/logrotate.d/ops-deploy <<'EOF'
+/var/log/ops-deploy/*.jsonl {
+  weekly
+  rotate 4
+  compress
+  missingok
+  notifempty
+  create 0640 deployer deployer
+}
+EOF
+fi
 
 if [[ "$(cd "$ROOT" && pwd -P)" != "$(cd "$DEST" && pwd -P)" ]]; then
   tar -C "$ROOT" -cf - \

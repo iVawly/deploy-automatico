@@ -27,6 +27,10 @@ set -a
 . ./.env
 set +a
 
+case "$(stat -c '%a' .env 2>/dev/null || printf '600')" in
+  *[1-7][0-7]) printf 'WARN: .env legível por grupo/outros; execute: chmod 600 .env\n' >&2 ;;
+esac
+
 : "${DOMAIN:?DOMAIN não definido em .env}"
 : "${ACME_EMAIL:?ACME_EMAIL não definido em .env}"
 : "${GRAFANA_ADMIN_USER:?GRAFANA_ADMIN_USER não definido em .env}"
@@ -53,21 +57,29 @@ for network in public internal; do
   fi
 done
 
-for secret in traefik_dashboard_users grafana_admin_password; do
-  if ! docker secret inspect "$secret" >/dev/null 2>&1; then
-    cat >&2 <<EOF
-ERROR: segredo '$secret' não existe.
-EOF
-    cat >&2 <<'EOF'
-Crie antes de continuar, por exemplo:
-  export TRAEFIK_ADMIN_USER='<usuario>'
-  export TRAEFIK_ADMIN_PASSWORD='<senha-forte>'
-  printf '%s\n' "$(htpasswd -nbB "$TRAEFIK_ADMIN_USER" "$TRAEFIK_ADMIN_PASSWORD")" | docker secret create traefik_dashboard_users -
-  openssl rand -base64 24 | docker secret create grafana_admin_password -
-EOF
-    exit 1
+ensure_secret() {
+  local name="$1" value="$2" source_hint="$3"
+  if docker secret inspect "$name" >/dev/null 2>&1; then
+    return 0
   fi
-done
+  [[ -n "$value" ]] || die "segredo '$name' não existe e $source_hint não está definido em .env"
+  printf '%s' "$value" | docker secret create "$name" - >/dev/null
+  echo "segredo $name criado a partir de .env"
+}
+
+if ! docker secret inspect traefik_dashboard_users >/dev/null 2>&1; then
+  : "${TRAEFIK_ADMIN_USER:?TRAEFIK_ADMIN_USER não definido em .env (necessário para criar o segredo)}"
+  : "${TRAEFIK_ADMIN_PASSWORD:?TRAEFIK_ADMIN_PASSWORD não definido em .env (necessário para criar o segredo)}"
+  [[ "$TRAEFIK_ADMIN_USER" =~ ^[A-Za-z0-9._-]+$ ]] || die "TRAEFIK_ADMIN_USER inválido"
+  command -v openssl >/dev/null 2>&1 || die "openssl não instalado (necessário para o hash do dashboard)"
+  ensure_secret traefik_dashboard_users \
+    "$TRAEFIK_ADMIN_USER:$(printf '%s' "$TRAEFIK_ADMIN_PASSWORD" | openssl passwd -apr1 -stdin)" \
+    "TRAEFIK_ADMIN_USER/TRAEFIK_ADMIN_PASSWORD"
+fi
+if ! docker secret inspect grafana_admin_password >/dev/null 2>&1; then
+  : "${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD não definido em .env (necessário para criar o segredo)}"
+  ensure_secret grafana_admin_password "$GRAFANA_ADMIN_PASSWORD" "GRAFANA_ADMIN_PASSWORD"
+fi
 
 mkdir -p "$ROOT/dynamic"
 sed "s|\${DOMAIN}|${DOMAIN}|g" "$ROOT/deploy/traefik/dynamic/platform.yml.tpl" >"$ROOT/dynamic/platform.yml"

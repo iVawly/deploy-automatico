@@ -21,7 +21,7 @@ Demonstração do fluxo real da plataforma em um Docker Desktop com Swarm de nó
 ## Pré-requisitos
 
 - Docker Desktop com Linux containers e Swarm habilitável.
-- Git Bash (usa `bash`, `openssl` e `cygpath`).
+- Git Bash ou WSL/Linux com `bash` e `openssl` (`cygpath` é usado apenas no Git Bash).
 - Portas 80, 443 e 5000 livres.
 - Acesso à internet para baixar imagens e resolver `nip.io`.
 
@@ -109,7 +109,7 @@ docker stack services demo-platform
 No Uptime Kuma, crie dois monitores para `demo-app`:
 
 - `https://demo.127.0.0.1.nip.io/` (disponibilidade pública, aceitar certificado inválido).
-- `http://traefik:8081/ping` (saúde interna do Traefik; retorna `OK`).
+- `http://demo-platform_traefik:8081/ping` (saúde interna do Traefik; retorna `OK`). Use `<DEMO_STACK>_traefik` se você mudou `DEMO_STACK`.
 
 No Grafana, a datasource Loki já está provisionada. Consultas:
 

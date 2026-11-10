@@ -28,6 +28,7 @@ ACTOR="${OPS_DEPLOY_ACTOR:-${GITHUB_ACTOR:-$(id -un 2>/dev/null || echo unknown)
 COMMIT="${OPS_DEPLOY_COMMIT:-${GITHUB_SHA:-unknown}}"
 CERT_RESOLVER="${OPS_DEPLOY_CERT_RESOLVER-letsencrypt}"
 INSECURE_TLS="${OPS_DEPLOY_INSECURE_TLS:-0}"
+PROXY_HOST="${OPS_DEPLOY_PROXY_HOST:-platform_traefik}"
 IMAGE_DIGEST="${OPS_DEPLOY_IMAGE_DIGEST:-}"
 ALLOW_MUTABLE_TAG="${OPS_DEPLOY_ALLOW_MUTABLE_TAG:-0}"
 
@@ -36,6 +37,13 @@ info() { log "INFO  $*"; }
 warn() { log "WARN  $*"; }
 err() { log "ERROR $*"; }
 die() { err "$*"; exit 1; }
+
+validate_uint() {
+  [[ "$2" =~ ^[0-9]+$ ]] || die "$1 inválido: $2 (use um inteiro >= 0)"
+}
+validate_uint OPS_DEPLOY_PUBLIC_RETRIES "$PUBLIC_RETRIES"
+validate_uint OPS_DEPLOY_PUBLIC_INTERVAL "$PUBLIC_INTERVAL"
+validate_uint OPS_DEPLOY_DRAIN_SECONDS "$DRAIN_SECONDS"
 
 usage() {
   cat <<'EOF'
@@ -64,15 +72,24 @@ Environment:
   OPS_DEPLOY_COMMIT         Recorded in the ledger (default: GITHUB_SHA)
   OPS_DEPLOY_CERT_RESOLVER  Traefik certificate resolver; empty uses the default certificate
   OPS_DEPLOY_INSECURE_TLS   1 to skip TLS verification in the public probe (local demo)
+  OPS_DEPLOY_PROXY_HOST     Swarm service DNS name of the edge proxy (default: platform_traefik)
   OPS_DEPLOY_IMAGE_DIGEST   Digest sha256:... used by deploy/bootstrap (or pass --digest)
   OPS_DEPLOY_ALLOW_MUTABLE_TAG 1 allows tag-only deploys (legacy/local demo only)
+  OPS_DEPLOY_RETRY_MAX      Attempts for docker pull/service create (default: 3)
+  OPS_DEPLOY_RETRY_DELAY    Seconds between attempts (default: 2)
 
 Exit codes: 0 success, 1 failure, 2 usage.
 EOF
 }
 
 json_escape() {
-  printf '%s' "$1" | tr '\n' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037'
 }
 
 now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -275,6 +292,30 @@ run_cmd() {
   "$@"
 }
 
+run_cmd_retry() {
+  local attempts="${OPS_DEPLOY_RETRY_MAX:-3}" delay="${OPS_DEPLOY_RETRY_DELAY:-2}" attempt
+  [[ "$attempts" =~ ^[0-9]+$ && "$attempts" -gt 0 ]] || attempts=3
+  [[ "$delay" =~ ^[0-9]+$ ]] || delay=2
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if run_cmd "$@"; then
+      return 0
+    fi
+    [[ "$attempt" -lt "$attempts" ]] || return 1
+    warn "tentativa $attempt/$attempts falhou: $*; repetindo em ${delay}s"
+    sleep "$delay"
+  done
+}
+
+wait_service_absent() {
+  local svc="$1" attempt
+  [[ "$DRY_RUN" == "1" ]] && return 0
+  for ((attempt = 1; attempt <= 20; attempt++)); do
+    service_exists "$svc" || return 0
+    sleep 1
+  done
+  return 1
+}
+
 # Sets HEALTH_CODE and HEALTH_BODY.
 split_response() {
   local out="$1"
@@ -300,7 +341,7 @@ request() {
     local -a extra=()
     if [[ -n "$host" ]]; then
       if [[ "$url" == https://* ]]; then
-        extra+=(--connect-to "$host:443:traefik:443")
+        extra+=(--connect-to "$host:443:$PROXY_HOST:443")
         [[ "$INSECURE_TLS" == "1" ]] && extra+=(-k)
       else
         extra+=(-H "Host: $host")
@@ -372,6 +413,7 @@ deploy_slot() {
   if service_exists "$svc"; then
     info "recriando serviço $svc para aplicar a configuração atual"
     run_cmd docker service rm "$svc" >/dev/null 2>&1 || true
+    wait_service_absent "$svc" || warn "serviço $svc ainda aparece após remoção; tentando recriar mesmo assim"
   fi
 
   local args=(
@@ -393,6 +435,7 @@ deploy_slot() {
     --env "APP_VERSION=$version"
     --env "APP_PORT=$APP_PORT"
     --init
+    --security-opt no-new-privileges:true
     --stop-grace-period "$APP_STOP_GRACE_PERIOD"
     --mount "type=tmpfs,destination=/tmp,tmpfs-size=$APP_TMPFS_SIZE,tmpfs-mode=1777"
     --log-driver json-file
@@ -413,7 +456,7 @@ deploy_slot() {
   done
   args+=("$image")
   info "criando serviço $svc com $image"
-  run_cmd "${args[@]}"
+  run_cmd_retry "${args[@]}"
 }
 
 write_route() {
@@ -506,11 +549,14 @@ cmd_bootstrap() {
   local image
   image="$(image_ref "$version" "$digest")"
   info "bootstrap de $app na versão $version (slot blue)"
-  if ! run_cmd docker pull "$image"; then
+  if ! run_cmd_retry docker pull "$image"; then
     ledger_append "$app" "$version" blue bootstrap failed "falha ao baixar imagem" "$digest"
     die "falha ao baixar a imagem $image"
   fi
-  deploy_slot blue "$version" "$digest"
+  if ! deploy_slot blue "$version" "$digest"; then
+    ledger_append "$app" "$version" blue bootstrap failed "falha ao criar o serviço inicial" "$digest"
+    die "falha ao criar o serviço blue"
+  fi
 
   if ! wait_healthy blue; then
     scale_service "$(service_name blue)" 0 || true
@@ -522,7 +568,7 @@ cmd_bootstrap() {
   backup_route
   write_route blue "$version"
 
-  if ! wait_public; then
+  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public; then
     restore_route
     scale_service "$(service_name blue)" 0 || true
     ledger_append "$app" "$version" blue bootstrap failed "verificação pública reprovada" "$digest"
@@ -550,7 +596,7 @@ cmd_recover() {
   image="$(image_ref "$version" "$digest")"
   info "recuperando $app $version no slot $slot"
 
-  if ! run_cmd docker pull "$image"; then
+  if ! run_cmd_retry docker pull "$image"; then
     ledger_append "$app" "$version" "$slot" recover failed "falha ao baixar imagem" "$digest"
     die "falha ao baixar a imagem $image"
   fi
@@ -568,7 +614,7 @@ cmd_recover() {
 
   write_route "$slot" "$version"
 
-  if ! wait_public; then
+  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public; then
     ledger_append "$app" "$version" "$slot" recover failed "verificação pública reprovada" "$digest"
     die "recuperação abortada: verificação pública reprovada"
   fi
@@ -608,7 +654,7 @@ cmd_deploy() {
     die "pré-condição falhou: slot ativo $from_slot não está saudável; deploy não iniciado"
   fi
 
-  if ! run_cmd docker pull "$image"; then
+  if ! run_cmd_retry docker pull "$image"; then
     ledger_append "$app" "$version" "$to_slot" deploy failed "falha ao baixar imagem" "$digest"
     die "falha ao baixar a imagem $image"
   fi
@@ -674,7 +720,7 @@ cmd_rollback() {
 
   info "rollback de $app: $current_version ($current_slot) -> $target ($to_slot)"
 
-  if ! run_cmd docker pull "$image"; then
+  if ! run_cmd_retry docker pull "$image"; then
     ledger_append "$app" "$target" "$to_slot" rollback failed "falha ao baixar imagem" "$digest"
     die "falha ao baixar a imagem $image"
   fi
@@ -711,12 +757,14 @@ cmd_rollback() {
 }
 
 cmd_verify() {
-  local app="${1:-}" slot="" json=1
+  local app="${1:-}" slot="" json=1 body_json=null
   [[ -n "$app" ]] || { usage; exit 2; }
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --slot) slot="${2:-}"; shift 2 ;;
+      --slot)
+        [[ $# -ge 2 && -n "$2" ]] || die "faltou valor para --slot"
+        slot="$2"; shift 2 ;;
       --quiet) json=0; shift ;;
       *) die "argumento inválido para verify: $1" ;;
     esac
@@ -730,12 +778,13 @@ cmd_verify() {
   [[ "$slot" == "blue" || "$slot" == "green" ]] || die "slot inválido: $slot"
 
   probe_health "$slot" || true
+  [[ -n "${HEALTH_BODY:-}" ]] && body_json="\"$(json_escape "$HEALTH_BODY")\""
   if [[ "$json" == "1" ]]; then
     printf '{"app":"%s","slot":"%s","healthy":%s,"http_code":"%s","checked_at":"%s","body":%s}\n' \
       "$(json_escape "$app")" "$(json_escape "$slot")" \
       "$([[ "$HEALTH_CODE" == "200" ]] && printf 'true' || printf 'false')" \
       "$(json_escape "${HEALTH_CODE:-}")" "$(now_utc)" \
-      "$(printf '%s' "${HEALTH_BODY:-null}" | sed 's/^$/null/')"
+      "$body_json"
   else
     printf '%s/%s healthy=%s http=%s\n' "$app" "$slot" \
       "$([[ "$HEALTH_CODE" == "200" ]] && printf yes || printf no)" "${HEALTH_CODE:-none}"
@@ -748,7 +797,12 @@ cmd_status() {
   local app="${1:-}" as_json=0
   [[ -n "$app" ]] || { usage; exit 2; }
   shift || true
-  [[ "${1:-}" == "--json" ]] && as_json=1
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      *) die "argumento inválido para status: $1" ;;
+    esac
+  done
   load_app "$app"
 
   local line version="" slot="" ts="" digest=""

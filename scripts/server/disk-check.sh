@@ -5,6 +5,11 @@ set -Eeuo pipefail
 
 : "${UPTIME_KUMA_PUSH_URL:?defina UPTIME_KUMA_PUSH_URL}"
 THRESHOLD="${DISK_THRESHOLD:-80}"
+if [[ ! "$THRESHOLD" =~ ^[0-9]+$ ]] || (( 10#$THRESHOLD < 1 || 10#$THRESHOLD > 100 )); then
+  echo "DISK_THRESHOLD inválido: $THRESHOLD (use 1-100)" >&2
+  exit 2
+fi
+THRESHOLD=$((10#$THRESHOLD))
 
 usage_percent="$(df --output=pcent / | tail -n 1 | tr -dc '0-9')"
 if [[ -z "$usage_percent" ]]; then

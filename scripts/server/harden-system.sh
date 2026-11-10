@@ -7,7 +7,7 @@ umask 022
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y unattended-upgrades fail2ban python3-systemd auditd
+apt-get install -y --no-install-recommends unattended-upgrades fail2ban python3-systemd auditd
 
 cat >/etc/sysctl.d/99-ops-deploy.conf <<'EOF'
 kernel.dmesg_restrict = 1

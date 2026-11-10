@@ -34,8 +34,9 @@ O `harden-ssh.sh` aplica `AllowGroups ops` e cria
 `/etc/sudoers.d/10-ops-deploy`; root permanece como break-glass. Teste o login por
 chave em outra sessão antes de fechar a atual.
 
-Verificação: login por senha recusado; varredura externa mostra apenas
-22/80/443; `systemctl is-active fail2ban auditd` retorna `active`. Se o SSH
+Verificação: login por senha recusado; em nó único, varredura externa mostra
+apenas 22/80/443 (multi-node adiciona as portas de Swarm restritas ao
+`SWARM_CIDR`); `systemctl is-active fail2ban auditd` retorna `active`. Se o SSH
 usar outra porta, execute `SSH_PORT=<porta> sudo -E ./scripts/server/firewall.sh`.
 
 ## 3. Docker e Swarm
@@ -44,6 +45,12 @@ usar outra porta, execute `SSH_PORT=<porta> sudo -E ./scripts/server/firewall.sh
 sudo ./scripts/server/install-docker.sh
 sudo ./scripts/server/init-swarm.sh <ip-do-servidor>
 ```
+
+Se a rede padrão do Docker (`172.30.0.0/16`), `icc` ou `userland-proxy`
+conflitarem com VPN/rede existente, rode o instalador com
+`DOCKER_ADDRESS_POOL`, `DOCKER_ADDRESS_POOL_SIZE`, `DOCKER_ICC` e
+`DOCKER_USERLAND_PROXY` sobrescritos. Em cluster multi-node, libere as portas
+de Swarm com `SWARM_CIDR=<cidr-do-cluster> sudo -E ./scripts/server/firewall.sh`.
 
 Guarde a chave de desbloqueio exibida no cofre. Verificação:
 
@@ -58,7 +65,7 @@ docker node ls
 export TRAEFIK_ADMIN_USER='<usuario>'
 export TRAEFIK_ADMIN_PASSWORD='<senha-forte>'
 printf '%s\n' "$(htpasswd -nbB "$TRAEFIK_ADMIN_USER" "$TRAEFIK_ADMIN_PASSWORD")" | sudo docker secret create traefik_dashboard_users -
-openssl rand -base64 24 | sudo docker secret create grafana_admin_password -
+printf '%s' "$(openssl rand -base64 24)" | sudo docker secret create grafana_admin_password -
 # crie também os segredos de cada aplicação real, por exemplo:
 # printf '%s' '<valor>' | sudo docker secret create demo_app_database_url -
 ```

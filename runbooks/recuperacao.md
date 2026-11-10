@@ -24,8 +24,15 @@ Verifique: imagem disponível no GHCR, segredos existentes, redes `public`/`inte
 
 ## Restaurar configuração
 
-A ordem importa: instale o código, restaure a configuração, recrie o `.env` e só
-então faça o bootstrap. O backup não inclui `.env` nem segredos.
+A ordem importa: instale o código, restaure a configuração (e o `.env`, se ele
+foi incluído no backup) e só então faça o bootstrap. Por padrão o backup não
+inclui `.env` nem segredos.
+
+Para incluir o `.env` no backup (ele contém segredos; armazene o arquivo cifrado):
+
+```bash
+sudo env BACKUP_INCLUDE_ENV=1 /opt/deploy-platform/scripts/server/backup-config.sh
+```
 
 ```bash
 # 1. Se /opt/deploy-platform ainda não existe, instale a partir do clone:
@@ -35,7 +42,7 @@ sudo /caminho/do/clone/scripts/install.sh
 sudo RESTORE_FORCE=1 /opt/deploy-platform/scripts/server/restore-config.sh \
   /var/backups/ops-deploy/ops-deploy-config-<stamp>.tar.gz
 
-# 3. Confira/recrie o .env (DOMAIN, ACME_EMAIL, GRAFANA_ADMIN_USER):
+# 3. Se o backup não incluiu .env, recrie (DOMAIN, ACME_EMAIL e credenciais):
 sudoedit /opt/deploy-platform/.env
 
 # 4. Recrie redes, segredos e a stack com a configuração restaurada:
@@ -43,8 +50,9 @@ sudo /opt/deploy-platform/scripts/bootstrap-platform.sh
 ```
 
 O script valida o checksum pelo hash, recusa caminhos absolutos/`..`, cria um
-backup `pre-restore-*` e restaura `dynamic/`, `deploy/`, `runbooks/`, `docs/` e
-o ledger de releases. Não inclui segredos nem volumes de dados.
+backup `pre-restore-*` (incluindo o `.env` atual, se existir) e restaura
+`dynamic/`, `deploy/`, `runbooks/`, `docs/`, o ledger de releases e o `.env`
+quando presente no arquivo. Volumes de dados continuam fora do backup.
 
 ## Restaurar dados persistentes
 

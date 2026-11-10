@@ -48,6 +48,26 @@ bootstrap() {
   [[ "$output" == *"já existe release estável"* ]]
 }
 
+@test "bootstrap records a failure when the initial service cannot be created" {
+  run env SHIM_DOCKER_FAIL_CREATE=1 OPS_DEPLOY_RETRY_MAX=1 "$OPS" bootstrap test-app 1.0.0
+  [ "$status" -eq 1 ]
+  grep -q '"action":"bootstrap".*"result":"failed".*"falha ao criar o serviço inicial"' "$SHIM_STATE/releases.jsonl"
+  [ ! -f "$TEST_ROOT/dynamic/test-app.yml" ]
+}
+
+@test "bootstrap skips public verification when APP_VERIFY_PUBLIC=0" {
+  mkdir -p "$TEST_ROOT/apps/no-public"
+  sed -e 's/^APP_NAME=.*/APP_NAME=no-public/' \
+    -e 's/^APP_DOMAIN=.*/APP_DOMAIN=no-public.internal.example.com/' \
+    -e 's/^APP_VERIFY_PUBLIC=.*/APP_VERIFY_PUBLIC=0/' \
+    "$BATS_TEST_DIRNAME/fixtures/apps/test-app/app.conf" >"$TEST_ROOT/apps/no-public/app.conf"
+  touch "$SHIM_STATE/public-fail"
+
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" bootstrap no-public 1.0.0
+  [ "$status" -eq 0 ]
+  grep -q '"app":"no-public".*"action":"bootstrap".*"result":"success"' "$SHIM_STATE/releases.jsonl"
+}
+
 @test "recover recreates the active slot from the release ledger" {
   bootstrap
   rm -f "$SHIM_STATE/services/app-test-app-blue" "$SHIM_STATE/services/app-test-app-blue.replicas"
@@ -139,12 +159,35 @@ bootstrap() {
   [[ "$output" == *'"healthy":true'* ]]
 }
 
+@test "verify requires a value for --slot" {
+  bootstrap
+  run "$OPS" verify test-app --slot
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"faltou valor para --slot"* ]]
+}
+
+@test "status rejects unknown arguments" {
+  bootstrap
+  run "$OPS" status test-app --bogus
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"argumento inválido para status"* ]]
+}
+
 @test "verify fails with exit 1 when the active slot is unhealthy" {
   bootstrap
   echo blue >"$SHIM_STATE/unhealthy"
   run "$OPS" verify test-app
   [ "$status" -eq 1 ]
   [[ "$output" == *'"healthy":false'* ]]
+}
+
+@test "verify escapes a non-JSON health body into valid JSON" {
+  bootstrap
+  printf '{"status":"healthy"}\nquoted "x" \\ slash\tend' >"$SHIM_STATE/weird-health-body"
+  run "$OPS" verify test-app
+  [ "$status" -eq 0 ]
+  json_line="$(printf '%s\n' "$output" | grep '^{' | tail -n 1)"
+  printf '%s' "$json_line" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["healthy"] is True; assert d["http_code"] == "200"; assert "quoted" in d["body"] and "slash" in d["body"]'
 }
 
 @test "verify fails with exit 1 when the health probe times out" {
@@ -245,6 +288,7 @@ bootstrap() {
   run "$OPS" deploy test-app 1.0.1
   [ "$status" -eq 0 ]
   grep -q -- '--read-only' "$SHIM_LOG"
+  grep -q -- '--security-opt no-new-privileges:true' "$SHIM_LOG"
   grep -q -- '--cap-drop ALL' "$SHIM_LOG"
   grep -q -- '--limit-memory 256M' "$SHIM_LOG"
   grep -q -- '--limit-cpu 0.50' "$SHIM_LOG"
