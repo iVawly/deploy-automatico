@@ -109,7 +109,7 @@ deploy, não uma sonda ao vivo):
 | `APP_HEALTH_PATH` | não | Padrão `/health` |
 | `APP_VOLUME` | não | Volume Docker preservado entre releases |
 | `APP_MOUNT_PATH` | não | Padrão `/data` |
-| `APP_SECRETS` | não | Nomes de Docker Secrets a montar |
+| `APP_SECRETS` | não | Nomes de Docker Secrets a montar; devem começar por letra/número |
 | `APP_NETWORK` | não | Padrão `public` |
 | `APP_HEALTH_TIMEOUT` | não | Padrão 5 segundos |
 | `APP_HEALTH_RETRIES` | não | Padrão 12 tentativas |

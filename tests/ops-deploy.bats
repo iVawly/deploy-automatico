@@ -361,3 +361,60 @@ bootstrap() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"nome de segredo inválido"* ]]
 }
+
+@test "recover validates APP_SECRETS before removing the active service" {
+  mkdir -p "$TEST_ROOT/apps/test-app"
+  cp "$BATS_TEST_DIRNAME/fixtures/apps/test-app/app.conf" "$TEST_ROOT/apps/test-app/app.conf"
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" bootstrap test-app 1.0.0
+  [ "$status" -eq 0 ]
+  [ -f "$SHIM_STATE/services/app-test-app-blue" ]
+
+  printf 'APP_SECRETS="-broken"\n' >>"$TEST_ROOT/apps/test-app/app.conf"
+  route_before="$(cat "$TEST_ROOT/dynamic/test-app.yml")"
+  ledger_before="$(cat "$SHIM_STATE/releases.jsonl")"
+
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" recover test-app
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"nome de segredo inválido"* ]]
+  [ -f "$SHIM_STATE/services/app-test-app-blue" ]
+  [ "$(cat "$TEST_ROOT/dynamic/test-app.yml")" = "$route_before" ]
+  [ "$(cat "$SHIM_STATE/releases.jsonl")" = "$ledger_before" ]
+}
+
+@test "recover rejects unexpected extra arguments" {
+  bootstrap
+  run "$OPS" recover test-app --bogus
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"argumento inválido para recover"* ]]
+}
+
+@test "rollback rejects unexpected extra arguments" {
+  bootstrap
+  route_before="$(cat "$TEST_ROOT/dynamic/test-app.yml")"
+  run "$OPS" rollback test-app 1.0.0 --digest "$TEST_DIGEST"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"argumento inválido para rollback"* ]]
+  [ "$(cat "$TEST_ROOT/dynamic/test-app.yml")" = "$route_before" ]
+}
+
+@test "APP_KEEP_VERSIONS accepts a decimal value with a leading zero" {
+  mkdir -p "$TEST_ROOT/apps/zero-versions"
+  sed 's/^APP_NAME=.*/APP_NAME=zero-versions/' \
+    "$BATS_TEST_DIRNAME/fixtures/apps/test-app/app.conf" >"$TEST_ROOT/apps/zero-versions/app.conf"
+  echo 'APP_KEEP_VERSIONS=08' >>"$TEST_ROOT/apps/zero-versions/app.conf"
+
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" status zero-versions --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"retention_limit":8'* ]]
+}
+
+@test "dry-run deploy does not sleep for the drain window" {
+  command -v timeout >/dev/null 2>&1 || skip "timeout não disponível"
+  timeout --version >/dev/null 2>&1 || skip "GNU timeout não disponível"
+  bootstrap
+
+  run timeout 3 env OPS_DEPLOY_DRY_RUN=1 OPS_DEPLOY_PROBE_MODE=docker \
+    OPS_DEPLOY_DRAIN_SECONDS=30 "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DRY-RUN"* ]]
+}

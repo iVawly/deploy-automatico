@@ -53,6 +53,17 @@ validate_flag() {
   [[ "$2" == "0" || "$2" == "1" ]] || die "$1 deve ser 0 ou 1 (recebido: '$2')"
 }
 
+validate_secret_names() {
+  local -a names=()
+  local name
+  [[ -n "${APP_SECRETS:-}" ]] || return 0
+  read -r -a names <<< "$APP_SECRETS"
+  for name in "${names[@]}"; do
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+      || die "nome de segredo inválido em APP_SECRETS: '$name'"
+  done
+}
+
 validate_uint OPS_DEPLOY_PUBLIC_RETRIES "$PUBLIC_RETRIES"
 validate_uint OPS_DEPLOY_PUBLIC_INTERVAL "$PUBLIC_INTERVAL"
 validate_uint OPS_DEPLOY_DRAIN_SECONDS "$DRAIN_SECONDS"
@@ -164,8 +175,11 @@ load_app() {
   : "${APP_LOG_MAX_FILE:=3}"
   : "${APP_CAP_DROP:=ALL}"
 
-  [[ "$APP_KEEP_VERSIONS" =~ ^[0-9]+$ && "$APP_KEEP_VERSIONS" -gt 0 ]] \
+  [[ "$APP_KEEP_VERSIONS" =~ ^[0-9]+$ ]] \
     || die "APP_KEEP_VERSIONS inválido em $conf: use um inteiro maior que zero"
+  (( 10#$APP_KEEP_VERSIONS > 0 )) \
+    || die "APP_KEEP_VERSIONS inválido em $conf: use um inteiro maior que zero"
+  APP_KEEP_VERSIONS="$((10#$APP_KEEP_VERSIONS))"
 
   if [[ ! "$APP_PORT" =~ ^[0-9]+$ ]] || ! (( 10#$APP_PORT >= 1 && 10#$APP_PORT <= 65535 )); then
     die "APP_PORT inválido em $conf: $APP_PORT (use 1-65535)"
@@ -179,6 +193,7 @@ load_app() {
   validate_flag APP_READ_ONLY "$APP_READ_ONLY"
   validate_flag APP_VERIFY_PUBLIC "$APP_VERIFY_PUBLIC"
   validate_flag APP_KEEP_PREVIOUS "$APP_KEEP_PREVIOUS"
+  validate_secret_names
 
   APP_CHECKSUM="$(sha256sum "$conf" | cut -d' ' -f1)"
 }
@@ -509,10 +524,11 @@ deploy_slot() {
     args+=(--mount "type=volume,source=$APP_VOLUME,target=$APP_MOUNT_PATH")
   fi
   local -a app_secrets=()
-  read -r -a app_secrets <<< "${APP_SECRETS:-}"
+  if [[ -n "${APP_SECRETS:-}" ]]; then
+    read -r -a app_secrets <<< "$APP_SECRETS"
+  fi
   local secret
   for secret in "${app_secrets[@]}"; do
-    [[ "$secret" =~ ^[A-Za-z0-9_.-]+$ ]] || die "nome de segredo inválido em APP_SECRETS: '$secret'"
     args+=(--secret "$secret")
   done
   args+=("$image")
@@ -649,6 +665,7 @@ cmd_bootstrap() {
 cmd_recover() {
   local app="${1:-}"
   [[ -n "$app" ]] || { usage; exit 2; }
+  [[ $# -eq 1 ]] || die "argumento inválido para recover: $2"
   load_app "$app"
   require_docker
   acquire_lock
@@ -749,7 +766,7 @@ cmd_deploy() {
 
   ledger_append "$app" "$version" "$to_slot" deploy success "promovido para $to_slot" "$digest"
 
-  if [[ "$APP_KEEP_PREVIOUS" != "1" ]]; then
+  if [[ "$APP_KEEP_PREVIOUS" != "1" && "$DRY_RUN" != "1" ]]; then
     [[ "$DRAIN_SECONDS" == "0" ]] || sleep "$DRAIN_SECONDS"
     scale_service "$(service_name "$from_slot")" 0 || warn "não foi possível reduzir o slot anterior $from_slot"
   fi
@@ -760,6 +777,7 @@ cmd_deploy() {
 cmd_rollback() {
   local app="${1:-}" target="${2:-}"
   [[ -n "$app" ]] || { usage; exit 2; }
+  [[ $# -le 2 ]] || die "argumento inválido para rollback: $3"
   load_app "$app"
   require_docker
   acquire_lock
@@ -815,7 +833,7 @@ cmd_rollback() {
 
   ledger_append "$app" "$target" "$to_slot" rollback success "rollback de $current_version para $target" "$digest"
 
-  if [[ "$APP_KEEP_PREVIOUS" != "1" ]]; then
+  if [[ "$APP_KEEP_PREVIOUS" != "1" && "$DRY_RUN" != "1" ]]; then
     [[ "$DRAIN_SECONDS" == "0" ]] || sleep "$DRAIN_SECONDS"
     scale_service "$(service_name "$current_slot")" 0 || warn "não foi possível reduzir o slot $current_slot"
   fi

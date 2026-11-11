@@ -1,6 +1,6 @@
 # Pendências de auditoria
 
-Escopo desta rodada: os **5 altos**, os **20 médios** e os **19 baixos**
+Escopo desta rodada: os **5 altos**, os **22 médios** e os **22 baixos**
 levantados nas revisões atuais.
 
 Legenda: `[x]` resolvido (com validação)
@@ -91,6 +91,18 @@ Legenda: `[x]` resolvido (com validação)
   continuação de cabeçalho. `request_id` aceita apenas
   `[A-Za-z0-9._:-]` com até 128 caracteres e gera UUID quando o valor é
   inseguro; testes cobrem CRLF, excesso de tamanho e espaços.
+- [x] **M21 — `APP_SECRETS` validado após a remoção do serviço.** O
+  `deploy_slot` removia o serviço antes de validar os nomes; um segredo
+  inválido podia derrubar o slot ativo no `recover` ou o slot anterior no
+  `deploy` e só então abortar. A validação foi movida para `load_app`, antes de
+  qualquer mutação, e o regex agora exige primeiro caractere alfanumérico;
+  teste cobre `recover` sem remover o serviço.
+- [x] **M22 — Restore aceitava symlink/hardlink no tar.** A checagem bloqueava
+  caminhos absolutos e `..`, mas não entradas `l`/`h`/especiais. Um backup com
+  `dynamic -> /etc` podia ser preservado por `cp -a` e fazer o bootstrap
+  escrever como root fora de `DEST`. O restore agora recusa symlink, hardlink e
+  tipos especiais, extrai com `--no-same-owner` e valida o arquivo em modo de
+  simulação; testes cobrem symlink e hardlink.
 
 ## Baixos
 
@@ -144,6 +156,17 @@ Legenda: `[x]` resolvido (com validação)
 - [x] **B19 — `make lint-yaml` falhava no demo local.** O fim de
   `local-demo/docker-compose.yml` tinha espaços em branco e nenhum newline
   final, quebrando o job de YAML do CI. O arquivo foi normalizado.
+- [x] **B20 — Dry-run aguardava a drenagem.** Mesmo sem criar serviço, o
+  `deploy`/`rollback` simulados executavam `sleep "$DRAIN_SECONDS"`. O bloco de
+  drenagem agora é ignorado no dry-run; teste usa `timeout` para garantir que
+  não há espera.
+- [x] **B21 — `recover`/`rollback` ignoravam argumentos extras.** Comandos como
+  `rollback app 1.0.0 --digest ...` aceitavam o argumento extra e podiam induzir
+  o operador a achar que ele foi aplicado. Ambos rejeitam argumentos além dos
+  previstos; testes cobrem.
+- [x] **B22 — `APP_KEEP_VERSIONS` com zero à esquerda.** `08` era interpretado
+  como octal e rejeitado; agora a validação usa base decimal e normaliza o
+  valor antes de expô-lo no JSON do `status`.
 
 ## Histórico
 
@@ -153,3 +176,7 @@ Legenda: `[x]` resolvido (com validação)
 - 2026-11-11: segunda rodada de auditoria (M15–M20, B14–B19) corrigida e validada
   com `shellcheck`, `bash -n`, `bats` (32 testes) e `python3 -m unittest`
   (10 testes).
+- 2026-11-11: rodada final (M21–M22, B20–B22) corrigida e validada com
+  `shellcheck`, `bash -n`, `bats` (40 testes), `docker compose config` e
+  `python3 -m unittest` (10 testes). Auditoria ampla encerrada; próximos ajustes
+  somente mediante falha concreta ou mudança de requisito.

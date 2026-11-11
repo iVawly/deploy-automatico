@@ -19,7 +19,8 @@ Versionamento SemVer para o CLI e para a plataforma.
 - Runner com versão/checksum fixados e auto-update desabilitado.
 - Host com sysctl, auditd, fail2ban, journald persistente e atualizações
   automáticas.
-- Backup com checksum/retenção e restore com validação de caminho.
+- Backup com checksum/retenção e restore com validação de caminho; symlinks,
+  hardlinks e tipos especiais no tar são recusados antes da extração.
 - `ops-deploy deploy`/`bootstrap` exigem digest (`sha256:...`); o ledger registra
   o digest e o pipeline passa o digest do build.
 - CI com Gitleaks, Trivy, Hadolint, actionlint, testes e smoke test da imagem;
@@ -54,9 +55,13 @@ Versionamento SemVer para o CLI e para a plataforma.
 - `HEALTHCHECK` do Dockerfile respeita `APP_PORT`.
 - `bootstrap-platform.sh` detecta `.env` legível por grupo/outros em qualquer
   modo (ex.: `604`).
-- `APP_SECRETS` não sofre expansão de glob e nomes inválidos falham cedo.
+- `APP_SECRETS` não sofre expansão de glob, é validado antes de qualquer
+  remoção/criação de serviço e exige primeiro caractere alfanumérico.
 - CI roda shellcheck também em `scripts/ci/*.sh`; retry inválido falha com
   mensagem explícita em vez de usar o default.
+- Dry-run não executa mais o `sleep` de drenagem; `recover`/`rollback` rejeitam
+  argumentos extras; `APP_KEEP_VERSIONS` usa base decimal e normaliza zeros à
+  esquerda.
 - `local-demo/docker-compose.yml` normalizado (sem espaços no EOF), restaurando
   `make lint-yaml`.
 

@@ -22,14 +22,24 @@ else
 fi
 
 LISTING="$(mktemp)"
+TYPES="$(mktemp)"
 STAGE=""
-trap 'rm -rf "$STAGE" "$LISTING"' EXIT
+trap 'rm -rf "$STAGE" "$LISTING" "$TYPES"' EXIT
 if ! tar tzf "$ARCHIVE" >"$LISTING"; then
   echo "ERRO: não foi possível ler $ARCHIVE." >&2
   exit 1
 fi
 if grep -Eq '(^/|(^|/)\.\.(/|$))' "$LISTING"; then
   echo "ERRO: arquivo contém caminhos absolutos ou '..'; recusando." >&2
+  exit 1
+fi
+if ! tar tvzf "$ARCHIVE" >"$TYPES"; then
+  echo "ERRO: não foi possível inspecionar os tipos de $ARCHIVE." >&2
+  exit 1
+fi
+bad_types="$(awk 'substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" { print }' "$TYPES")"
+if [[ -n "$bad_types" ]]; then
+  echo "ERRO: arquivo contém symlink, hardlink ou tipo especial; recusando." >&2
   exit 1
 fi
 
@@ -40,7 +50,7 @@ if [[ "${RESTORE_FORCE:-0}" != "1" ]]; then
 fi
 
 STAGE="$(mktemp -d)"
-tar xzf "$ARCHIVE" -C "$STAGE"
+tar --no-same-owner -xzf "$ARCHIVE" -C "$STAGE"
 
 mkdir -p "$DEST" "$STATE_DIR" /var/backups/ops-deploy
 if [[ -d "$DEST/dynamic" || -d "$DEST/deploy" ]]; then
