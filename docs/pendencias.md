@@ -1,7 +1,7 @@
 # Pendências de auditoria
 
-Escopo desta rodada: os **5 altos**, os **14 médios** e os **13 baixos**
-levantados na revisão atual.
+Escopo desta rodada: os **5 altos**, os **20 médios** e os **19 baixos**
+levantados nas revisões atuais.
 
 Legenda: `[x]` resolvido (com validação)
 
@@ -61,6 +61,36 @@ Legenda: `[x]` resolvido (com validação)
 - [x] **M14 — Logs do pipeline não centralizados.** `scripts/ci/log-exec.sh`
   grava JSONL em `/var/log/ops-deploy/pipeline.jsonl`; Alloy coleta o diretório e
   envia ao Loki com `app="pipeline"`. Workflow usa o wrapper em deploy/verify.
+- [x] **M15 — Demo local validava o proxy errado.** O wrapper usava o padrão
+  `platform_traefik`, mas a stack local é `demo-platform`, cujo DNS é
+  `demo-platform_traefik`; o `bootstrap`/`deploy` abortava na verificação
+  pública. `local-demo/scripts/ops` agora deriva `OPS_DEPLOY_PROXY_HOST` de
+  `DEMO_STACK`, alinhado ao README e a `docs/observabilidade.md`.
+- [x] **M16 — `OPS_DEPLOY_DRY_RUN` não era um preview seguro.** Em modo docker as
+  sondas falhavam porque nenhum serviço era criado, o ledger recebia eventos
+  `failed` e a escrita de rota não era protegida. O dry-run agora ignora sondas
+  e esperas, não grava rota/ledger, não adquire lock e apenas descreve as ações.
+- [x] **M17 — Retry de `docker service create` não era idempotente.** Se o
+  primeiro create concluísse no servidor mas retornasse erro transitório, as
+  tentativas seguintes falhavam com "name already in use" e o deploy era
+  abortado. `create_service_retry` detecta o serviço criado (quando ele estava
+  ausente antes) e segue para o health check, sem aceitar serviço pré-existente
+  de uma remoção incompleta.
+- [x] **M18 — `app.conf` podia desligar proteções silenciosamente.** Valores
+  inválidos em `APP_READ_ONLY` (`true` em vez de `1`) deixavam o rootfs
+  gravável, e `APP_PIDS_LIMIT` não numérico removia o limite de PIDs sem aviso.
+  `load_app` agora valida porta, timeouts, retries, tmpfs, logs, PIDs e flags
+  0/1, falhando cedo com mensagem clara.
+- [x] **M19 — `install-docker.sh` sobrescrevia `daemon.json`.** O arquivo
+  existente era apenas copiado como backup e substituído, perdendo
+  `data-root`, `registry-mirrors` e outras chaves locais. Agora as chaves
+  gerenciadas são mescladas via `python3`, preservando o restante; JSON inválido
+  ou ausência de `python3` aborta antes de alterar o arquivo.
+- [x] **M20 — `X-Request-ID` refletido sem validação.** O demo-app copiava o
+  cabeçalho recebido para a resposta; um valor com CRLF/obs-fold injetava
+  continuação de cabeçalho. `request_id` aceita apenas
+  `[A-Za-z0-9._:-]` com até 128 caracteres e gera UUID quando o valor é
+  inseguro; testes cobrem CRLF, excesso de tamanho e espaços.
 
 ## Baixos
 
@@ -95,9 +125,31 @@ Legenda: `[x]` resolvido (com validação)
 - [x] **B13 — Renderização e repo Docker frágeis.** `up.sh` escapa `&`, `\` e
   `|` antes do `sed`; `install-docker.sh` valida `VERSION_CODENAME` e usa
   `--no-install-recommends`.
+- [x] **B14 — Checagem de permissão do `.env` incompleta.** O padrão
+  `*[1-7][0-7]` não detectava modos como `604`/`601`. `bootstrap-platform.sh`
+  agora verifica os dois últimos dígitos octais e alerta qualquer modo cujo
+  grupo/outros não seja `00`.
+- [x] **B15 — `HEALTHCHECK` fixava a porta 8080.** O Dockerfile ignorava
+  `APP_PORT`, marcando como unhealthy apps configurados em outra porta. O
+  healthcheck lê `APP_PORT` (padrão `8080`).
+- [x] **B16 — `APP_SECRETS` sujeito a glob e nomes inválidos.** O valor era
+  expandido pelo shell em `--secret source=...`. Agora é lido como array sem
+  glob e cada nome precisa casar `^[A-Za-z0-9_.-]+$`, falhando cedo caso
+  contrário.
+- [x] **B17 — CI não rodava shellcheck em `scripts/ci/*.sh`.** O `Makefile`
+  cobria esses arquivos, mas o workflow não; a lista do CI foi alinhada.
+- [x] **B18 — Retry inválido caía no default silenciosamente.**
+  `OPS_DEPLOY_RETRY_MAX`/`OPS_DEPLOY_RETRY_DELAY` não numéricos eram ignorados.
+  Ambos são validados no início do CLI, com erro explícito.
+- [x] **B19 — `make lint-yaml` falhava no demo local.** O fim de
+  `local-demo/docker-compose.yml` tinha espaços em branco e nenhum newline
+  final, quebrando o job de YAML do CI. O arquivo foi normalizado.
 
 ## Histórico
 
 - 2026-09-11: arquivo criado a partir da verificação do commit `18f84b1`.
 - 2026-10-11: altos, médios e baixos resolvidos e validados com `shellcheck`,
   `bash -n`, `bats` (22 testes), `python3 -m unittest` (7 testes) e `yamllint`.
+- 2026-11-11: segunda rodada de auditoria (M15–M20, B14–B19) corrigida e validada
+  com `shellcheck`, `bash -n`, `bats` (32 testes) e `python3 -m unittest`
+  (10 testes).

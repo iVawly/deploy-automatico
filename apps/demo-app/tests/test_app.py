@@ -59,6 +59,20 @@ class TestCorrelation(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertEqual(len(first), 36)
 
+    def test_unsafe_request_id_is_replaced(self):
+        unsafe = "abc\r\n X-Evil: injected"
+        generated = app.request_id(unsafe)
+        self.assertNotEqual(generated, unsafe)
+        self.assertEqual(len(generated), 36)
+
+    def test_overlong_request_id_is_replaced(self):
+        unsafe = "a" * 129
+        self.assertNotEqual(app.request_id(unsafe), unsafe)
+        self.assertEqual(len(app.request_id(unsafe)), 36)
+
+    def test_request_id_with_spaces_is_replaced(self):
+        self.assertEqual(len(app.request_id("not safe")), 36)
+
     def test_log_record_has_required_fields(self):
         line = app.log_event("info", "request", "req-1", path="/", code=200)
         record = json.loads(line)

@@ -297,3 +297,67 @@ bootstrap() {
   grep -q -- '--log-opt max-size=10m' "$SHIM_LOG"
   grep -q 'type=tmpfs,destination=/tmp,tmpfs-size=16777216' "$SHIM_LOG"
 }
+
+@test "dry-run bootstrap does not create services, routes or ledger entries" {
+  run env OPS_DEPLOY_DRY_RUN=1 OPS_DEPLOY_PROBE_MODE=docker "$OPS" bootstrap test-app 1.0.0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DRY-RUN"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-blue" ]
+  [ ! -f "$TEST_ROOT/dynamic/test-app.yml" ]
+  [ ! -f "$SHIM_STATE/releases.jsonl" ]
+}
+
+@test "dry-run deploy previews without changing the route or ledger" {
+  bootstrap
+  route_before="$(cat "$TEST_ROOT/dynamic/test-app.yml")"
+  ledger_before="$(cat "$SHIM_STATE/releases.jsonl")"
+
+  run env OPS_DEPLOY_DRY_RUN=1 OPS_DEPLOY_PROBE_MODE=docker "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DRY-RUN"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-green" ]
+  [ "$(cat "$TEST_ROOT/dynamic/test-app.yml")" = "$route_before" ]
+  [ "$(cat "$SHIM_STATE/releases.jsonl")" = "$ledger_before" ]
+}
+
+@test "deploy continues when a failed create actually created the service" {
+  bootstrap
+  run env SHIM_DOCKER_PARTIAL_CREATE=1 OPS_DEPLOY_RETRY_MAX=2 "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 0 ]
+  [ -f "$SHIM_STATE/services/app-test-app-green" ]
+  grep -q 'app-test-app-green:8080' "$TEST_ROOT/dynamic/test-app.yml"
+  grep -q '"version":"1.0.1".*"slot":"green".*"action":"deploy".*"result":"success"' "$SHIM_STATE/releases.jsonl"
+}
+
+@test "app.conf rejects a non-boolean APP_READ_ONLY instead of enabling writes" {
+  mkdir -p "$TEST_ROOT/apps/bad-read-only"
+  sed 's/^APP_NAME=.*/APP_NAME=bad-read-only/' \
+    "$BATS_TEST_DIRNAME/fixtures/apps/test-app/app.conf" >"$TEST_ROOT/apps/bad-read-only/app.conf"
+  echo 'APP_READ_ONLY=true' >>"$TEST_ROOT/apps/bad-read-only/app.conf"
+
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" status bad-read-only
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"APP_READ_ONLY deve ser 0 ou 1"* ]]
+}
+
+@test "app.conf rejects an invalid APP_PIDS_LIMIT instead of dropping the limit" {
+  mkdir -p "$TEST_ROOT/apps/bad-pids"
+  sed 's/^APP_NAME=.*/APP_NAME=bad-pids/' \
+    "$BATS_TEST_DIRNAME/fixtures/apps/test-app/app.conf" >"$TEST_ROOT/apps/bad-pids/app.conf"
+  echo 'APP_PIDS_LIMIT=many' >>"$TEST_ROOT/apps/bad-pids/app.conf"
+
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" status bad-pids
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"APP_PIDS_LIMIT inválido"* ]]
+}
+
+@test "app.conf rejects a glob in APP_SECRETS instead of expanding it" {
+  mkdir -p "$TEST_ROOT/apps/bad-secrets"
+  sed 's/^APP_NAME=.*/APP_NAME=bad-secrets/' \
+    "$BATS_TEST_DIRNAME/fixtures/apps/test-app/app.conf" >"$TEST_ROOT/apps/bad-secrets/app.conf"
+  echo 'APP_SECRETS="*"' >>"$TEST_ROOT/apps/bad-secrets/app.conf"
+
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" bootstrap bad-secrets 1.0.0
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"nome de segredo inválido"* ]]
+}

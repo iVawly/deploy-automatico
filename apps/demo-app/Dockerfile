@@ -42,6 +42,6 @@ EXPOSE 8080
 STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=12)"]
+  CMD ["python", "-c", "import os, urllib.request; port=os.environ.get('APP_PORT','8080'); urllib.request.urlopen('http://127.0.0.1:'+port+'/health', timeout=12)"]
 
 ENTRYPOINT ["python", "/app/app.py"]

@@ -30,7 +30,7 @@ Use **Test Notification** no canal antes de considerar a configuração concluí
 
 ## Correlação de requisições
 
-- Aplicações geram `X-Request-ID` quando o cliente não envia e devolvem o cabeçalho na resposta.
+- Aplicações geram `X-Request-ID` quando o cliente não envia e devolvem o cabeçalho na resposta. Valores recebidos só são reutilizados se casarem `[A-Za-z0-9._:-]{1,128}`; caso contrário, um novo ID é gerado.
 - O Traefik preserva `X-Request-ID` vindo do cliente nos access logs.
 - Limitação: o Traefik não gera identificador. Para requisições sem o cabeçalho na entrada, correlacione proxy e aplicação por `service` + janela de tempo. Consulte a seção "Limitação conhecida" no README.
 

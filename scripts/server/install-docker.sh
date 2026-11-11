@@ -23,9 +23,10 @@ if ! command -v docker >/dev/null 2>&1; then
   apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 fi
 
+DAEMON_JSON=/etc/docker/daemon.json
 install -d -m 0755 /etc/docker
-if [[ -f /etc/docker/daemon.json ]]; then
-  cp -a /etc/docker/daemon.json "/etc/docker/daemon.json.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+if [[ -f "$DAEMON_JSON" ]]; then
+  cp -a "$DAEMON_JSON" "$DAEMON_JSON.bak.$(date -u +%Y%m%dT%H%M%SZ)"
   echo "daemon.json existente preservado como backup" >&2
 fi
 
@@ -47,7 +48,63 @@ pool_prefix="${DOCKER_ADDRESS_POOL#*/}"
 [[ "$DOCKER_USERLAND_PROXY" =~ ^(true|false)$ ]] \
   || { echo "DOCKER_USERLAND_PROXY inválido: $DOCKER_USERLAND_PROXY (use true ou false)" >&2; exit 1; }
 
-cat >/etc/docker/daemon.json <<EOF
+if [[ -f "$DAEMON_JSON" ]]; then
+  command -v python3 >/dev/null 2>&1 \
+    || { echo "ERRO: $DAEMON_JSON já existe e python3 não está disponível para mesclar sem perder configurações." >&2; exit 1; }
+  DOCKER_DAEMON_JSON="$DAEMON_JSON" \
+  DOCKER_ADDRESS_POOL="$DOCKER_ADDRESS_POOL" \
+  DOCKER_ADDRESS_POOL_SIZE="$DOCKER_ADDRESS_POOL_SIZE" \
+  DOCKER_ICC="$DOCKER_ICC" \
+  DOCKER_USERLAND_PROXY="$DOCKER_USERLAND_PROXY" \
+  python3 - <<'PY'
+import json
+import os
+import sys
+
+path = os.environ["DOCKER_DAEMON_JSON"]
+try:
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+except (OSError, json.JSONDecodeError) as exc:
+    print(f"ERRO: não foi possível ler {path}: {exc}", file=sys.stderr)
+    sys.exit(1)
+if not isinstance(data, dict):
+    print(f"ERRO: {path} deve conter um objeto JSON", file=sys.stderr)
+    sys.exit(1)
+
+log_opts = data.get("log-opts")
+if not isinstance(log_opts, dict):
+    log_opts = {}
+log_opts["max-size"] = "10m"
+log_opts["max-file"] = "3"
+data["log-driver"] = "json-file"
+data["log-opts"] = log_opts
+data["icc"] = os.environ["DOCKER_ICC"] == "true"
+data["userland-proxy"] = os.environ["DOCKER_USERLAND_PROXY"] == "true"
+data["default-address-pools"] = [
+    {
+        "base": os.environ["DOCKER_ADDRESS_POOL"],
+        "size": int(os.environ["DOCKER_ADDRESS_POOL_SIZE"]),
+    }
+]
+
+tmp = f"{path}.tmp"
+try:
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, path)
+except OSError as exc:
+    print(f"ERRO: não foi possível gravar {path}: {exc}", file=sys.stderr)
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    sys.exit(1)
+PY
+  echo "daemon.json existente mesclado: chaves gerenciadas atualizadas, demais preservadas" >&2
+else
+  cat >"$DAEMON_JSON" <<EOF
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -64,7 +121,8 @@ cat >/etc/docker/daemon.json <<EOF
   ]
 }
 EOF
-chmod 0644 /etc/docker/daemon.json
+fi
+chmod 0644 "$DAEMON_JSON"
 
 systemctl enable docker
 systemctl restart docker

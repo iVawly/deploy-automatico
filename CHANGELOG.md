@@ -30,6 +30,12 @@ Versionamento SemVer para o CLI e para a plataforma.
   `/etc/sudoers.d/10-ops-deploy` validado por `visudo`; o prefixo `10-` preserva
   regra NOPASSWD específica de operador sem senha (ex.: usuário do cloud-init).
 - Dependabot passou a acompanhar as imagens das stacks `deploy` e `local-demo`.
+- `X-Request-ID` do demo-app agora é validado (`[A-Za-z0-9._:-]`, até 128
+  caracteres) antes de ser refletido, bloqueando injeção/obs-fold de cabeçalho.
+- `install-docker.sh` mescla `daemon.json` preservando `data-root`,
+  `registry-mirrors` e chaves locais, em vez de sobrescrever o arquivo.
+- `app.conf` valida flags de hardening e limites numéricos, evitando desligar
+  `read-only`/PIDs silenciosamente com valores inválidos.
 
 ### Fixed
 
@@ -39,6 +45,20 @@ Versionamento SemVer para o CLI e para a plataforma.
 - Runbook de recuperação restaura configuração/`.env` antes do bootstrap e usa
   `recover` após restaurar o volume.
 - Checksum de backup usa nome relativo e o restore compara apenas o hash.
+- Demo local usa `OPS_DEPLOY_PROXY_HOST` derivado de `DEMO_STACK`, alinhado ao
+  DNS `demo-platform_traefik`.
+- `OPS_DEPLOY_DRY_RUN` virou preview seguro: não sonda, não grava rota/ledger e
+  não adquire lock.
+- Retry de `docker service create` detecta criação parcial e não falha com
+  "name already in use".
+- `HEALTHCHECK` do Dockerfile respeita `APP_PORT`.
+- `bootstrap-platform.sh` detecta `.env` legível por grupo/outros em qualquer
+  modo (ex.: `604`).
+- `APP_SECRETS` não sofre expansão de glob e nomes inválidos falham cedo.
+- CI roda shellcheck também em `scripts/ci/*.sh`; retry inválido falha com
+  mensagem explícita em vez de usar o default.
+- `local-demo/docker-compose.yml` normalizado (sem espaços no EOF), restaurando
+  `make lint-yaml`.
 
 ### Added
 

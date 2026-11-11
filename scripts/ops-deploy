@@ -23,6 +23,8 @@ PROBE_IMAGE_DEFAULT="curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac
 PUBLIC_RETRIES="${OPS_DEPLOY_PUBLIC_RETRIES:-6}"
 PUBLIC_INTERVAL="${OPS_DEPLOY_PUBLIC_INTERVAL:-2}"
 DRAIN_SECONDS="${OPS_DEPLOY_DRAIN_SECONDS:-10}"
+RETRY_MAX="${OPS_DEPLOY_RETRY_MAX:-3}"
+RETRY_DELAY="${OPS_DEPLOY_RETRY_DELAY:-2}"
 DRY_RUN="${OPS_DEPLOY_DRY_RUN:-0}"
 ACTOR="${OPS_DEPLOY_ACTOR:-${GITHUB_ACTOR:-$(id -un 2>/dev/null || echo unknown)}}"
 COMMIT="${OPS_DEPLOY_COMMIT:-${GITHUB_SHA:-unknown}}"
@@ -41,9 +43,21 @@ die() { err "$*"; exit 1; }
 validate_uint() {
   [[ "$2" =~ ^[0-9]+$ ]] || die "$1 inválido: $2 (use um inteiro >= 0)"
 }
+
+validate_positive_uint() {
+  validate_uint "$1" "$2"
+  (( 10#$2 > 0 )) || die "$1 inválido: $2 (use um inteiro maior que zero)"
+}
+
+validate_flag() {
+  [[ "$2" == "0" || "$2" == "1" ]] || die "$1 deve ser 0 ou 1 (recebido: '$2')"
+}
+
 validate_uint OPS_DEPLOY_PUBLIC_RETRIES "$PUBLIC_RETRIES"
 validate_uint OPS_DEPLOY_PUBLIC_INTERVAL "$PUBLIC_INTERVAL"
 validate_uint OPS_DEPLOY_DRAIN_SECONDS "$DRAIN_SECONDS"
+validate_positive_uint OPS_DEPLOY_RETRY_MAX "$RETRY_MAX"
+validate_uint OPS_DEPLOY_RETRY_DELAY "$RETRY_DELAY"
 
 usage() {
   cat <<'EOF'
@@ -104,6 +118,7 @@ require_docker() {
 }
 
 acquire_lock() {
+  [[ "$DRY_RUN" == "1" ]] && return 0
   mkdir -p "$STATE_DIR"
   exec {LOCK_FD}>"$LOCK_FILE"
   if command -v flock >/dev/null 2>&1; then
@@ -151,6 +166,19 @@ load_app() {
 
   [[ "$APP_KEEP_VERSIONS" =~ ^[0-9]+$ && "$APP_KEEP_VERSIONS" -gt 0 ]] \
     || die "APP_KEEP_VERSIONS inválido em $conf: use um inteiro maior que zero"
+
+  if [[ ! "$APP_PORT" =~ ^[0-9]+$ ]] || ! (( 10#$APP_PORT >= 1 && 10#$APP_PORT <= 65535 )); then
+    die "APP_PORT inválido em $conf: $APP_PORT (use 1-65535)"
+  fi
+  validate_positive_uint APP_HEALTH_TIMEOUT "$APP_HEALTH_TIMEOUT"
+  validate_positive_uint APP_HEALTH_RETRIES "$APP_HEALTH_RETRIES"
+  validate_uint APP_HEALTH_INTERVAL "$APP_HEALTH_INTERVAL"
+  validate_positive_uint APP_TMPFS_SIZE "$APP_TMPFS_SIZE"
+  validate_positive_uint APP_LOG_MAX_FILE "$APP_LOG_MAX_FILE"
+  validate_uint APP_PIDS_LIMIT "$APP_PIDS_LIMIT"
+  validate_flag APP_READ_ONLY "$APP_READ_ONLY"
+  validate_flag APP_VERIFY_PUBLIC "$APP_VERIFY_PUBLIC"
+  validate_flag APP_KEEP_PREVIOUS "$APP_KEEP_PREVIOUS"
 
   APP_CHECKSUM="$(sha256sum "$conf" | cut -d' ' -f1)"
 }
@@ -201,6 +229,10 @@ other_slot() {
 
 ledger_append() {
   local app="$1" version="$2" slot="$3" action="$4" result="$5" message="${6:-}" digest="${7:-}"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    info "DRY-RUN: registraria $action/$result para $app $version (slot $slot)${message:+: $message}"
+    return 0
+  fi
   mkdir -p "$STATE_DIR"
   printf '{"ts":"%s","app":"%s","version":"%s","commit":"%s","slot":"%s","action":"%s","result":"%s","author":"%s","checksum":"%s","digest":"%s","message":"%s"}\n' \
     "$(now_utc)" \
@@ -293,15 +325,30 @@ run_cmd() {
 }
 
 run_cmd_retry() {
-  local attempts="${OPS_DEPLOY_RETRY_MAX:-3}" delay="${OPS_DEPLOY_RETRY_DELAY:-2}" attempt
-  [[ "$attempts" =~ ^[0-9]+$ && "$attempts" -gt 0 ]] || attempts=3
-  [[ "$delay" =~ ^[0-9]+$ ]] || delay=2
+  local attempts="$RETRY_MAX" delay="$RETRY_DELAY" attempt
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     if run_cmd "$@"; then
       return 0
     fi
     [[ "$attempt" -lt "$attempts" ]] || return 1
     warn "tentativa $attempt/$attempts falhou: $*; repetindo em ${delay}s"
+    sleep "$delay"
+  done
+}
+
+create_service_retry() {
+  local svc="$1" was_absent="$2"; shift 2
+  local attempts="$RETRY_MAX" delay="$RETRY_DELAY" attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if run_cmd "$@"; then
+      return 0
+    fi
+    if [[ "$DRY_RUN" != "1" && "$was_absent" == "1" ]] && service_exists "$svc"; then
+      warn "criação de $svc retornou erro, mas o serviço já existe; seguindo para o health check"
+      return 0
+    fi
+    [[ "$attempt" -lt "$attempts" ]] || return 1
+    warn "tentativa $attempt/$attempts falhou ao criar $svc; repetindo em ${delay}s"
     sleep "$delay"
   done
 }
@@ -363,6 +410,10 @@ probe_health() {
 
 wait_healthy() {
   local slot="$1" attempt
+  if [[ "$DRY_RUN" == "1" ]]; then
+    info "DRY-RUN: ignorando health check de $APP_NAME/$slot (nenhum serviço foi criado)"
+    return 0
+  fi
   for ((attempt = 1; attempt <= APP_HEALTH_RETRIES; attempt++)); do
     if probe_health "$slot"; then
       return 0
@@ -386,6 +437,10 @@ probe_public() {
 
 wait_public() {
   local attempt
+  if [[ "$DRY_RUN" == "1" ]]; then
+    info "DRY-RUN: ignorando verificação pública de $APP_NAME (nenhuma rota foi aplicada)"
+    return 0
+  fi
   for ((attempt = 1; attempt <= PUBLIC_RETRIES; attempt++)); do
     probe_public && return 0
     sleep "$PUBLIC_INTERVAL"
@@ -406,14 +461,17 @@ scale_service() {
 }
 
 deploy_slot() {
-  local slot="$1" version="$2" digest="${3:-}" svc image
+  local slot="$1" version="$2" digest="${3:-}" svc image svc_was_absent=1
   svc="$(service_name "$slot")"
   image="$(image_ref "$version" "$digest")"
 
   if service_exists "$svc"; then
     info "recriando serviço $svc para aplicar a configuração atual"
     run_cmd docker service rm "$svc" >/dev/null 2>&1 || true
-    wait_service_absent "$svc" || warn "serviço $svc ainda aparece após remoção; tentando recriar mesmo assim"
+    if ! wait_service_absent "$svc"; then
+      warn "serviço $svc ainda aparece após remoção; tentando recriar mesmo assim"
+      svc_was_absent=0
+    fi
   fi
 
   local args=(
@@ -450,17 +508,24 @@ deploy_slot() {
   if [[ -n "$APP_VOLUME" ]]; then
     args+=(--mount "type=volume,source=$APP_VOLUME,target=$APP_MOUNT_PATH")
   fi
+  local -a app_secrets=()
+  read -r -a app_secrets <<< "${APP_SECRETS:-}"
   local secret
-  for secret in $APP_SECRETS; do
+  for secret in "${app_secrets[@]}"; do
+    [[ "$secret" =~ ^[A-Za-z0-9_.-]+$ ]] || die "nome de segredo inválido em APP_SECRETS: '$secret'"
     args+=(--secret "$secret")
   done
   args+=("$image")
   info "criando serviço $svc com $image"
-  run_cmd_retry "${args[@]}"
+  create_service_retry "$svc" "$svc_was_absent" "${args[@]}"
 }
 
 write_route() {
   local slot="$1" version="$2" file tmp tls
+  if [[ "$DRY_RUN" == "1" ]]; then
+    info "DRY-RUN: escreveria a rota $APP_NAME -> http://$(service_name "$slot"):$APP_PORT"
+    return 0
+  fi
   mkdir -p "$DYNAMIC_DIR"
   file="$DYNAMIC_DIR/$APP_NAME.yml"
   tmp="$(mktemp "$DYNAMIC_DIR/.$APP_NAME.XXXXXX")"
@@ -497,6 +562,7 @@ EOF
 
 backup_route() {
   ROUTE_BACKUP=""
+  [[ "$DRY_RUN" == "1" ]] && return 0
   [[ -f "$DYNAMIC_DIR/$APP_NAME.yml" ]] || return 0
   ROUTE_BACKUP="$(mktemp)"
   cp "$DYNAMIC_DIR/$APP_NAME.yml" "$ROUTE_BACKUP"
@@ -504,6 +570,7 @@ backup_route() {
 
 restore_route() {
   local file="$DYNAMIC_DIR/$APP_NAME.yml"
+  [[ "$DRY_RUN" == "1" ]] && return 0
   if [[ -n "${ROUTE_BACKUP:-}" && -f "$ROUTE_BACKUP" ]]; then
     cp "$ROUTE_BACKUP" "$file"
     rm -f "$ROUTE_BACKUP"
@@ -649,7 +716,7 @@ cmd_deploy() {
 
   info "deploy de $app $version: slot ativo $from_slot ($from_version), candidato $to_slot"
 
-  if ! probe_health "$from_slot"; then
+  if [[ "$DRY_RUN" != "1" ]] && ! probe_health "$from_slot"; then
     ledger_append "$app" "$version" "$to_slot" deploy failed "pré-condição: slot ativo $from_slot não está saudável" "$digest"
     die "pré-condição falhou: slot ativo $from_slot não está saudável; deploy não iniciado"
   fi

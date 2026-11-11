@@ -36,6 +36,12 @@ case "$cmd" in
           esac
         done
         [[ -n "$name" ]] || exit 1
+        [[ -f "$SHIM_STATE/services/$name" ]] && exit 1
+        if [[ "${SHIM_DOCKER_PARTIAL_CREATE:-}" == "1" && ! -f "$SHIM_STATE/partial-create-done" ]]; then
+          printf '%s' "$image" >"$SHIM_STATE/services/$name"
+          touch "$SHIM_STATE/partial-create-done"
+          exit 1
+        fi
         printf '%s' "$image" >"$SHIM_STATE/services/$name"
         ;;
       rm)

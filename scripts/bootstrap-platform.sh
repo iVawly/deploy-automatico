@@ -27,9 +27,11 @@ set -a
 . ./.env
 set +a
 
-case "$(stat -c '%a' .env 2>/dev/null || printf '600')" in
-  *[1-7][0-7]) printf 'WARN: .env legível por grupo/outros; execute: chmod 600 .env\n' >&2 ;;
-esac
+env_mode="$(stat -c '%a' .env 2>/dev/null || printf '600')"
+env_group_other="${env_mode: -2}"
+if [[ "$env_group_other" != "00" ]]; then
+  printf 'WARN: .env legível por grupo/outros (modo %s); execute: chmod 600 .env\n' "$env_mode" >&2
+fi
 
 : "${DOMAIN:?DOMAIN não definido em .env}"
 : "${ACME_EMAIL:?ACME_EMAIL não definido em .env}"

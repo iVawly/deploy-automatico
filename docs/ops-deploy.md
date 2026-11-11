@@ -145,7 +145,9 @@ consciente e documente o motivo no PR.
 | `OPS_DEPLOY_DYNAMIC_DIR` | `<root>/dynamic` | Rotas do Traefik |
 | `OPS_DEPLOY_PROBE_MODE` | `docker` | `local` usa curl do host (testes) |
 | `OPS_DEPLOY_PROXY_HOST` | `platform_traefik` | DNS do proxy na rede overlay |
-| `OPS_DEPLOY_DRY_RUN` | `0` | Apenas registra comandos mutantes |
+| `OPS_DEPLOY_DRY_RUN` | `0` | Preview: descreve ações sem mutar serviços, rotas, lock ou ledger |
+| `OPS_DEPLOY_RETRY_MAX` | `3` | Tentativas para comandos Docker transitórios |
+| `OPS_DEPLOY_RETRY_DELAY` | `2` | Segundos entre tentativas |
 | `OPS_DEPLOY_DRAIN_SECONDS` | `10` | Janela antes de reduzir o slot anterior |
 | `OPS_DEPLOY_ALERT_WEBHOOK` | vazio | Alerta crítico em falha de rollback |
 | `OPS_DEPLOY_ACTOR` | `GITHUB_ACTOR`/`id -un` | Autor no ledger |

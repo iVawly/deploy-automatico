@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -21,6 +22,7 @@ VERSION = os.environ.get("APP_VERSION", "dev")
 PORT = int(os.environ.get("APP_PORT", "8080"))
 DEPENDENCY_URL = os.environ.get("DEPENDENCY_URL", "")
 DEPENDENCY_TIMEOUT = float(os.environ.get("DEPENDENCY_TIMEOUT", "2"))
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 def utc_now() -> str:
@@ -28,7 +30,9 @@ def utc_now() -> str:
 
 
 def request_id(value: str | None) -> str:
-    return value if value else str(uuid.uuid4())
+    if value and REQUEST_ID_RE.fullmatch(value):
+        return value
+    return str(uuid.uuid4())
 
 
 def log_event(level: str, message: str, req_id: str, **fields: object) -> str:
