@@ -42,13 +42,13 @@ flowchart LR
 ## Fluxo de deploy
 
 1. O pipeline testa, escaneia segredos e constrói a imagem `app:<versao>`.
-2. A imagem é publicada no GHCR com SBOM/proveniência; opcionalmente assinada.
+2. A imagem é publicada no GHCR com SBOM/proveniência e assinatura Cosign keyless.
 3. `ops-deploy deploy <app> <versao> --digest sha256:<hash>` baixa a imagem por tag e digest.
 4. O slot inativo é recriado com a configuração atual e limites de segurança.
 5. O healthcheck profundo (`/health` + `status=healthy`) precisa passar.
 6. A rota do Traefik é trocada atomicamente via arquivo em `dynamic/`.
-7. O hostname público é validado; em falha, a rota anterior é restaurada e o
-   slot novo é removido.
+7. O hostname público é validado (quando `APP_VERIFY_PUBLIC=1`); em falha, a
+   rota anterior é restaurada e o slot novo é reduzido a zero.
 8. Após a janela de drenagem, o slot anterior é reduzido, salvo
    `APP_KEEP_PREVIOUS=1`.
 
@@ -58,7 +58,8 @@ checksum da configuração. A operação é serializada por um lock.
 ## Fluxo de rollback
 
 `ops-deploy rollback <app> [versao]` reutiliza a imagem estável pelo digest registrado, recria o
-slot de destino, valida saúde e troca a rota de volta. O rollback não desfaz
+slot de destino, valida saúde e, após trocar a rota de volta, valida o hostname público
+(quando `APP_VERIFY_PUBLIC=1`). O rollback não desfaz
 migração de dados: compatibilidade de schema é responsabilidade da aplicação.
 
 ## Limites de confiança
@@ -69,7 +70,7 @@ migração de dados: compatibilidade de schema é responsabilidade da aplicaçã
 | Traefik → serviços | acesso direto a dashboards | basic auth no dashboard, rede `public` controlada |
 | Runner → host | runner comprometido executa como `deployer` (grupo docker) | PR revisado, environment `production`, token efêmero, permissões mínimas; risco residual aceito e documentado |
 | Alloy → Docker | socket bruto equivale a root | socket proxy read-only em rede interna, capabilities mínimas |
-| GitHub → imagem | tag mutável ou build adulterado | SemVer, digest, SBOM/proveniência, Cosign, Gitleaks/Trivy |
+| GitHub → imagem | tag mutável ou build adulterado | SemVer, digest, SBOM/proveniência, Cosign (assinatura gerada; deploy não verifica) e Gitleaks/Trivy |
 | Operador → segredos | vazamento em shell/histórico | Docker Secrets, `__FILE`, `.env` ignorado, rotação documentada |
 
 ## Falhas e comportamento
@@ -79,7 +80,7 @@ migração de dados: compatibilidade de schema é responsabilidade da aplicaçã
 | Imagem nova não sobe | deploy falha antes da troca de rota; slot saudável continua ativo |
 | Healthcheck falha antes da troca | candidato é reduzido; rota não muda; falha registrada no ledger (sem webhook) |
 | Validação pública falha após a troca | rota anterior é restaurada e o slot novo é reduzido; falha registrada no ledger (sem webhook) |
-| Rollback falha após a troca | versão restaurada é mantida para diagnóstico e um alerta crítico é enviado ao webhook configurado |
+| Rollback falha após a troca | versão restaurada é mantida para diagnóstico; o CLI envia alerta crítico quando `OPS_DEPLOY_ALERT_WEBHOOK` está definido e registra `WARN` quando não está |
 | Traefik reinicia | rotas vêm do file provider; serviços continuam |
 | Loki/Alloy indisponível | aplicação e deploy continuam; perda de logs durante a janela |
 | Disco cheio | monitor de disco alerta; Loki tem retenção e compactor |

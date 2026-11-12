@@ -25,7 +25,6 @@ Versionamento SemVer para o CLI e para a plataforma.
   o digest e o pipeline passa o digest do build.
 - CI com Gitleaks, Trivy, Hadolint, actionlint, testes e smoke test da imagem;
   CodeQL, Scorecard, Dependabot e ações fixadas por SHA.
-
 - SSH endurecido com drop-in `00-ops-deploy.conf` (vence o `50-cloud-init.conf`),
   `AllowGroups ops`, remoção do `99-` legado e sudo do grupo `ops` em
   `/etc/sudoers.d/10-ops-deploy` validado por `visudo`; o prefixo `10-` preserva

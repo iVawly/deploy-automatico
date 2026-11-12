@@ -27,8 +27,8 @@ sudo -u deployer ops-deploy rollback <app> 1.3.2
 1. Identifica a versão alvo no ledger `/var/lib/ops-deploy/releases.jsonl`.
 2. Baixa a imagem já publicada (não reconstrói).
 3. Sobe a versão alvo no slot inativo e aguarda saúde profunda.
-4. Troca a rota do Traefik e valida o hostname público.
-5. Reduz o slot anterior a zero após a janela de drenagem.
+4. Troca a rota do Traefik e valida o hostname público (quando `APP_VERIFY_PUBLIC=1`).
+5. Reduz o slot anterior a zero após a janela de drenagem, salvo `APP_KEEP_PREVIOUS=1`.
 6. Registra `action=rollback` com autor, origem e destino.
 
 O volume persistente é preservado; nenhum `docker volume rm` é executado.
@@ -53,7 +53,7 @@ Esperado: versão alvo ativa, `"healthy":true`, HTTP 200 na URL pública.
 ## Se o rollback falhar
 
 - **Antes da troca de tráfego:** a versão atual continua ativa; o comando retorna erro. Investigue a saúde da versão alvo.
-- **Depois da troca:** a versão restaurada é mantida para diagnóstico e um alerta crítico é emitido. Não execute novo rollback às cegas; siga `runbooks/incidentes.md`.
+- **Depois da troca:** a versão restaurada é mantida para diagnóstico; um alerta crítico é enviado se `OPS_DEPLOY_ALERT_WEBHOOK` estiver configurado e o CLI registra `WARN` caso contrário. Não execute novo rollback às cegas; siga `runbooks/incidentes.md`.
 
 ## Evidência para o aceite
 

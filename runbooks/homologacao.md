@@ -39,9 +39,10 @@ Se o provedor permitir, um wildcard `*.<DOMAIN>` cobre os quatro nomes.
 - Acesso de administrador ao repositório de infraestrutura.
 - Environment `production` com revisor obrigatório.
 - Runner self-hosted com os labels `self-hosted,linux,deploy`.
-- Para o pipeline completo, o `demo-app` precisa estar em repositório próprio:
-  o workflow está em `apps/demo-app/.github/workflows/deploy.yml` e passa a
-  valer quando esse diretório vira a raiz do repositório.
+- O monorepo já tem o workflow `.github/workflows/deploy-demo-app.yml`, disparado
+  por tags `demo-app-v*` ou `workflow_dispatch`. Para o pipeline no repositório
+  próprio do `demo-app`, use `apps/demo-app/.github/workflows/deploy.yml`, que
+  só vale quando esse diretório é a raiz do repositório.
 - Tokens do GHCR: leitura (`read:packages`) para o servidor e escrita
   (`write:packages`) para a publicação manual.
 
@@ -326,14 +327,15 @@ git push -u origin main
 ```
 
 No monorepo, o workflow de deploy é `.github/workflows/deploy-demo-app.yml` e
-roda em tags `demo-app-v*` ou `workflow_dispatch`. O workflow dentro de
-`apps/demo-app` só é executado quando esse diretório é a raiz de um repositório
-próprio. Configure o environment `production` com revisor e registre o runner
-no repositório onde o workflow vai rodar.
+roda em tags `demo-app-v*` ou `workflow_dispatch`. No repositório próprio do
+`demo-app`, o workflow é `deploy.yml` e roda em tags `v*` ou
+`workflow_dispatch`. Configure o environment `production` com revisor e
+registre o runner no repositório onde o workflow vai rodar.
 
-Primeira versão: publique `1.0.0` pelo caminho manual ou deixe a tag
-`demo-app-v1.0.0` construir a imagem e falhar no deploy por falta de bootstrap.
-Depois, obtenha o digest e faça o bootstrap:
+Primeira versão: publique `1.0.0` pelo caminho manual ou deixe a tag construir
+a imagem e falhar no deploy por falta de bootstrap (`demo-app-v1.0.0` no
+monorepo, `v1.0.0` no repositório próprio). Depois, obtenha o digest e faça o
+bootstrap:
 
 ```bash
 DIGEST="$(sudo -u deployer docker buildx imagetools inspect \
@@ -380,10 +382,13 @@ job `test` falha antes do build.
 
 ### Critério 2 — versão defeituosa não substitui a saudável
 
-Em um terminal, acompanhe os logs dos dois slots:
+Em um terminal, acompanhe o slot ativo (o candidato ainda não existe neste
+ponto; depois do deploy ele fica em `app-demo-app-green` ou
+`app-demo-app-blue`, conforme o slot livre):
 
 ```bash
-sudo docker service logs -f app-demo-app-blue app-demo-app-green
+ACTIVE_SLOT="$(sudo -u deployer ops-deploy status demo-app --json | jq -r .active_slot)"
+sudo docker service logs -f "app-demo-app-${ACTIVE_SLOT}"
 ```
 
 Em outro terminal, registre o estado e tente o deploy ruim:
@@ -429,9 +434,10 @@ Após o deploy defeituoso do critério 2, consulte o Grafana:
 {app="demo-app", version="1.1.0-bad"} | json
 ```
 
-Localize o `health check failed` e o erro da dependência. Se os logs do
-candidato já tiverem sido removidos, use a captura feita com
-`docker service logs` no critério 2. Guarde a consulta e o horário.
+Localize o `health check failed` e o erro da dependência. O serviço do
+candidato que falhou continua existindo com réplicas em zero; consulte os logs
+do slot oposto ao ativo (`docker service logs app-demo-app-<slot-candidato>`).
+Guarde a consulta e o horário.
 
 ### Critério 5 — rollback documentado
 
@@ -473,7 +479,9 @@ da aplicação e os volumes **somente após copiar as evidências**:
 ```bash
 sudo docker stack rm platform
 sudo docker service rm app-demo-app-blue app-demo-app-green
-sudo docker volume rm demo-app-data traefik_letsencrypt uptime_data loki_data alloy_data grafana_data
+sleep 5
+sudo docker volume rm demo-app-data platform_traefik_letsencrypt platform_uptime_data \
+  platform_loki_data platform_alloy_data platform_grafana_data
 sudo docker swarm leave --force
 ```
 

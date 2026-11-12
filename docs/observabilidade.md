@@ -81,7 +81,7 @@ Actions; o wrapper cobre as operações executadas no servidor.
 
 ## Durante um deploy
 
-O monitoramento é independente do ciclo de vida das aplicações: Uptime Kuma e Traefik continuam ativos enquanto um slot é substituído. O slot anterior só é reduzido após a troca de rota e a validação pública.
+O monitoramento é independente do ciclo de vida das aplicações: Uptime Kuma e Traefik continuam ativos enquanto um slot é substituído. O slot anterior só é reduzido após a troca de rota e a validação pública (quando `APP_VERIFY_PUBLIC=1`).
 
 ## Diagnóstico rápido
 

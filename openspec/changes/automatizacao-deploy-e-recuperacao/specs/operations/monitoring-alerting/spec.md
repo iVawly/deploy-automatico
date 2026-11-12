@@ -27,10 +27,10 @@ O sistema SHALL disponibilizar um painel único com o estado atual de cada aplic
 - **AND** visualiza a versão em execução e o horário da última verificação de cada aplicação
 
 ### Requirement: Alerta quando serviço fica indisponível
-O sistema SHALL emitir um alerta para o canal configurado pela equipe quando uma aplicação falhar em verificações consecutivas por um período igual ou superior a 2 minutos.
+O sistema SHALL emitir um alerta para o canal configurado pela equipe quando uma aplicação falhar por cerca de 90 segundos (intervalo de 30s e três retentativas).
 
 #### Scenario: Indisponibilidade gera alerta
-- **WHEN** uma aplicação falha em todas as verificações por 2 minutos consecutivos
+- **WHEN** uma aplicação falha em todas as verificações durante as três retentativas
 - **THEN** um alerta é enviado ao canal configurado
 - **AND** o alerta informa aplicação, versão, horário de início e link para o runbook de resposta
 

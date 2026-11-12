@@ -60,7 +60,7 @@ Controles principais:
   socket bruto do Docker; usa um proxy somente leitura em rede interna.
 - **Supply chain**: imagens de plataforma por digest, ações do GitHub por SHA,
   runner com versão e checksum fixados, SBOM/proveniência e assinatura Cosign no
-  fluxo de publicação.
+  fluxo de publicação. O deploy ainda não executa `cosign verify`.
 - **Borda**: TLS 1.2+, HSTS, `nosniff`, `frameDeny`, rate limit, dashboard do
   Traefik com basic auth e portas internas não publicadas.
 - **Host**: SSH somente por chave, firewall default-deny, fail2ban, auditd,

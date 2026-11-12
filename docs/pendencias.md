@@ -1,7 +1,7 @@
-# Pendências de auditoria
+# Histórico de auditoria
 
-Escopo desta rodada: os **5 altos**, os **22 médios** e os **22 baixos**
-levantados nas revisões atuais.
+Nenhuma pendência aberta. Este arquivo registra as correções concluídas nas
+rodadas de auditoria.
 
 Legenda: `[x]` resolvido (com validação)
 
@@ -50,12 +50,14 @@ Legenda: `[x]` resolvido (com validação)
   serviço Swarm (`app-<app>-<slot>`).
 - [x] **M10 — Doc superestima rollback/alerta.** Tabela de falhas distingue
   falha antes da troca (sem rollback e sem webhook), falha pública após a troca
-  (restaura rota, sem webhook) e falha de rollback após a troca (webhook crítico).
+  (restaura rota, sem webhook) e falha de rollback após a troca (webhook
+  crítico quando configurado).
 - [x] **M11 — Demo local frágil.** `openssl passwd -apr1 -stdin` sem newline,
   timeout do Traefik falha explicitamente e `demo.sh` valida cada `verify` com
   mensagem de contexto.
-- [x] **M12 — OpenSpec desatualizado.** `promote` removido do desenho; task de
-  retenção foi separada entre ledger (concluída) e GHCR (pendente explícita).
+- [x] **M12 — OpenSpec desatualizado.** `promote` removido do desenho; a
+  listagem no ledger foi concluída e a retenção no GHCR ficou como pendência
+  explícita.
 - [x] **M13 — Backup/restore não cobrem `.env`.** `BACKUP_INCLUDE_ENV=1` inclui o
   `.env`; restore o aplica com `0600` e preserva backup `pre-restore`.
 - [x] **M14 — Logs do pipeline não centralizados.** `scripts/ci/log-exec.sh`

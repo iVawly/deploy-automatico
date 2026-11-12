@@ -49,10 +49,11 @@ sudoedit /opt/deploy-platform/.env
 sudo /opt/deploy-platform/scripts/bootstrap-platform.sh
 ```
 
-O script valida o checksum pelo hash, recusa caminhos absolutos/`..`, cria um
-backup `pre-restore-*` (incluindo o `.env` atual, se existir) e restaura
-`dynamic/`, `deploy/`, `runbooks/`, `docs/`, o ledger de releases e o `.env`
-quando presente no arquivo. Volumes de dados continuam fora do backup.
+O script valida o checksum pelo hash, recusa caminhos absolutos/`..`, symlinks,
+hardlinks e tipos especiais, cria um backup `pre-restore-*` (incluindo o `.env`
+atual, se existir) e restaura `dynamic/`, `deploy/`, `runbooks/`, `docs/`, o
+ledger de releases e o `.env` quando presente no arquivo. A extração usa
+`--no-same-owner`; volumes de dados continuam fora do backup.
 
 ## Restaurar dados persistentes
 

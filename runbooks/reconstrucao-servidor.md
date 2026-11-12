@@ -8,7 +8,7 @@ Procedimento para reconstruir a base em um Ubuntu Server 24.04 limpo. Tempo esti
 - [ ] Backup de configuração mais recente (`/var/backups/ops-deploy/`), fora do host.
 - [ ] Chave de autolock do Swarm e segredos no cofre.
 - [ ] Acesso ao GitHub para registrar o runner.
-- [ ] Repositório `infra` clonado.
+- [ ] Repositório da plataforma clonado.
 
 ## 1. Usuário e acesso
 
@@ -62,6 +62,7 @@ docker node ls
 ## 4. Segredos e configuração
 
 ```bash
+sudo apt-get install -y --no-install-recommends apache2-utils jq openssl
 export TRAEFIK_ADMIN_USER='<usuario>'
 export TRAEFIK_ADMIN_PASSWORD='<senha-forte>'
 printf '%s\n' "$(htpasswd -nbB "$TRAEFIK_ADMIN_USER" "$TRAEFIK_ADMIN_PASSWORD")" | sudo docker secret create traefik_dashboard_users -

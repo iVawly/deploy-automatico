@@ -20,7 +20,8 @@ origem seja verificável.
 - Positivas: reprodutibilidade, detecção de regressão de segurança, auditoria de
   origem, atualização intencional.
 - Negativas: PRs de atualização exigem revisão e smoke test; imagens antigas
-  precisam de processo de upgrade; a assinatura depende do OIDC do GitHub.
+  precisam de processo de upgrade; a assinatura depende do OIDC do GitHub e o
+  deploy ainda não executa `cosign verify`.
 - Operação: atualizar digest/versão é uma mudança revisável, não um efeito
   colateral de `latest`.
 

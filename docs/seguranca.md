@@ -13,15 +13,19 @@
 - Imagens de plataforma são fixadas por digest (`imagem:tag@sha256:...`); atualizações chegam por PR do Dependabot.
 - Imagens de aplicação usam SemVer com digest obrigatório no deploy e são construídas no CI a partir do commit revisado.
 - O CI executa gitleaks, Trivy (filesystem e imagem), Hadolint, ShellCheck, actionlint e testes.
-- O workflow de publicação gera SBOM e atestação de proveniência; quando habilitado, assina a imagem com Cosign keyless.
+- O workflow de publicação gera SBOM e atestação de proveniência e assina a
+  imagem com Cosign keyless. O deploy ainda não executa `cosign verify`; a
+  garantia atual vem do digest e da revisão do workflow.
 - GitHub Actions são referenciadas por SHA completo; tags móveis não são aceitas em `main`.
 - O runner baixa a versão fixada e valida o SHA-256 do pacote antes de extrair.
 
 ## Containers
 
-- Slots de aplicação: rootfs read-only, `cap-drop ALL`, `/tmp` em tmpfs, limites de CPU/memória/PIDs e rotação de logs.
+- Slots de aplicação: rootfs read-only, `cap-drop ALL`,
+  `--security-opt no-new-privileges:true`, `/tmp` em tmpfs, limites de
+  CPU/memória/PIDs e rotação de logs; sem acesso ao socket do Docker. A imagem
+  deve rodar com usuário não-root.
 - Plataforma: rootfs read-only onde suportado, capabilities mínimas e limites de recursos.
-- Slots de aplicação usam `--security-opt no-new-privileges:true` além de usuário não-root, rootfs read-only, `cap-drop ALL` e socket proxy.
 - Alloy não monta `/var/run/docker.sock`; fala com `docker-socket-proxy` em rede interna, com API somente leitura.
 - O dashboard do Traefik exige basic auth; Grafana e Uptime Kuma nunca são expostos sem TLS.
 - TLS mínimo 1.2, HSTS, `nosniff`, `frameDeny` e rate limit por IP no edge.
@@ -64,7 +68,7 @@ O usuário `deployer` pertence ao grupo `docker`, o que equivale a root no host.
 - conta sem shell de login e sem sudo;
 - runner auto-hospedado escuta apenas conexões de saída;
 - token de registro efêmero, usado uma única vez;
-- permissões do workflow limitadas a `contents: read` e `packages: write`;
+- workflows de deploy limitados a `contents: read` e `packages: write`; CodeQL recebe `security-events: write` e Scorecard, `actions: read`;
 - segredos do repositório com escopo mínimo;
 - revogação: remover o runner em GitHub → Settings → Actions → Runners e apagar `/opt/actions-runner/.credentials`.
 

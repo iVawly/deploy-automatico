@@ -42,14 +42,14 @@ Usar Docker Engine com Swarm inicializado em nó único.
 
 ### 2. Estratégia de release: blue-green por slots
 
-Cada aplicação terá dois serviços Swarm, `app-<nome>-blue` e `app-<nome>-green`, compartilhando o mesmo volume persistente e a mesma rede interna. Apenas um slot recebe tráfego do proxy por vez.
+Cada aplicação terá dois serviços Swarm, `app-<nome>-blue` e `app-<nome>-green`, compartilhando o mesmo volume persistente e a mesma rede overlay (`public`, por padrão). Apenas um slot recebe tráfego do proxy por vez.
 
 Fluxo do deploy:
 
 1. Identificar o slot inativo.
 2. Atualizar o slot inativo com a nova imagem e aguardar saúde profunda.
 3. Se saudável, apontar a rota do proxy para o novo slot e validar pela URL pública.
-4. Manter o slot anterior em execução (sem tráfego) por uma janela de segurança e registrá-lo como versão anterior.
+4. Manter o slot anterior em execução (sem tráfego) durante a janela de drenagem e registrá-lo como versão anterior; encerrar o slot depois, salvo `APP_KEEP_PREVIOUS=1`.
 5. Se qualquer etapa falhar, descartar o slot candidato e manter o slot ativo intacto.
 
 **Por quê:** garante de forma explícita que tráfego só chega após saúde comprovada, e que a versão saudável continua completa e pronta para retorno, o que o rolling update nativo não assegura sozinho (o roteamento pode alcançar tarefas em execução antes do healthcheck).
@@ -61,7 +61,7 @@ Fluxo do deploy:
 
 ### 3. Proxy e roteamento: Traefik v3 com provider de arquivo
 
-Traefik v3 como reverse proxy na borda, TLS via ACME (Let's Encrypt) e roteamento por hostname. As rotas ficam em arquivos dinâmicos versionados (`dynamic/<app>.yml`), gerados pelo CLI de deploy e recarregados a quente.
+Traefik v3 como reverse proxy na borda, TLS via ACME (Let's Encrypt) e roteamento por hostname. As rotas ficam em arquivos dinâmicos gerados pelo CLI de deploy (`dynamic/<app>.yml`, não versionados) e são recarregadas a quente.
 
 **Por quê:** o provider de arquivo permite trocar o upstream de forma atômica e auditável, sem recriar serviços, e mantém o roteamento legível para a equipe. O ACME elimina renovação manual de certificados.
 
@@ -72,7 +72,7 @@ Traefik v3 como reverse proxy na borda, TLS via ACME (Let's Encrypt) e roteament
 
 ### 4. CI/CD: GitHub Actions com runner auto-hospedado no servidor
 
-Cada repositório de aplicação tem um workflow com as etapas: verificação de segredos (gitleaks), lint e testes, build e push da imagem para o GitHub Container Registry privado, deploy no slot inativo, verificação de saúde pública e promoção.
+Cada repositório de aplicação tem um workflow com as etapas: verificação de segredos (gitleaks), lint e testes, build e push da imagem para o GitHub Container Registry privado, deploy no slot inativo, verificação de saúde profunda, troca de rota e validação pública.
 
 O runner é instalado como serviço systemd sob o usuário `deployer`, no mesmo servidor.
 
@@ -111,7 +111,7 @@ Cada aplicação expõe `GET /health` (ou caminho equivalente documentado) retor
 
 ### 7. Monitoramento e alertas: Uptime Kuma
 
-Uptime Kuma executa verificações HTTP a cada 60 segundos contra o endpoint de saúde e a URL pública de cada aplicação, mantém painel de status e envia alertas por e-mail e/ou webhook, com repetição controlada.
+Uptime Kuma executa verificações HTTP a cada 30 segundos contra o endpoint de saúde e a URL pública de cada aplicação, mantém painel de status e envia alertas por e-mail e/ou webhook, com repetição controlada.
 
 **Por quê:** uma única ferramenta cobre disponibilidade, painel, canais de alerta e teste de notificação, com operação trivial para uma equipe pequena. O requisito é disponibilidade, não métricas de infraestrutura.
 
@@ -124,7 +124,7 @@ Métricas de container (CPU, memória) ficam como evolução futura, fora do esc
 
 ### 8. Logs: Grafana Alloy + Loki + Grafana
 
-Alloy coleta logs dos containers via socket do Docker, normaliza rótulos (`app`, `slot`, `version`, `service`) e envia ao Loki. Grafana é o ponto de consulta, já disponível para evoluir a painéis.
+Alloy coleta logs dos containers via `docker-socket-proxy` somente leitura, normaliza rótulos (`app`, `slot`, `version`, `service`) e envia ao Loki. Grafana é o ponto de consulta, já disponível para evoluir a painéis.
 
 **Por quê:** stack open source consolidada, retenção configurável, consulta por rótulos e integração nativa com Docker. Alloy substitui o Promtail, que está em fim de vida.
 
@@ -153,7 +153,7 @@ Rotação documentada: criar segredo com sufixo de versão, atualizar o serviço
 
 SSH apenas por chave, `PasswordAuthentication no`, `PermitRootLogin prohibit-password`, grupo `ops` para sudo, firewall permitindo somente 22/80/443, fail2ban, atualizações de segurança automáticas e auditoria básica (`auditd` ou journald persistente).
 
-O usuário `deployer` do runner tem acesso ao socket Docker por necessidade de deploy; o risco é equivalente a root e será explicitado no runbook, com sudo restrito e sem login interativo.
+O usuário `deployer` do runner tem acesso ao socket Docker por necessidade de deploy; o risco é equivalente a root e será explicitado no runbook, sem sudo e sem login interativo.
 
 **Alternativas consideradas:**
 
@@ -162,7 +162,7 @@ O usuário `deployer` do runner tem acesso ao socket Docker por necessidade de d
 
 ### 11. Registro de releases e retenção
 
-Cada deploy grava uma linha em `/var/lib/ops-deploy/releases.jsonl` com aplicação, versão, commit, slot, autor, horário, resultado e checksum da configuração. O CLI usa esse registro para `status` e para escolher a versão de rollback, mantendo as 5 últimas versões estáveis no ledger. A retenção de tags/imagens no GHCR é uma política separada do registry e não é garantida pelo ledger.
+Cada deploy grava uma linha em `/var/lib/ops-deploy/releases.jsonl` com aplicação, versão, commit, slot, autor, horário, resultado e checksum da configuração. O CLI usa esse registro para `status` e para escolher a versão de rollback, listando as 5 últimas versões estáveis. A retenção de tags/imagens no GHCR é uma política separada do registry e não é garantida pelo ledger.
 
 **Por quê:** histórico auditável independente do GitHub, consultável no servidor e suficiente para o procedimento de rollback documentado.
 
@@ -200,10 +200,10 @@ Não haverá segundo servidor. O ensaio usa uma aplicação de referência (`dem
 ## Risks / Trade-offs
 
 - **[Servidor único é ponto único de falha]** → backups diários de volumes e configuração, imagem de reconstrução documentada, rollback testado; HA multi-host registrado como evolução.
-- **[Runner com acesso ao socket Docker equivale a root]** → usuário sem login, sudo restrito, firewall de saída, segredos do GitHub com escopo mínimo, runbook de revogação.
+- **[Runner com acesso ao socket Docker equivale a root]** → usuário sem login e sem sudo, segredos do GitHub com escopo mínimo, runbook de revogação.
 - **[Blue-green dobra o consumo de recursos por aplicação]** → limite de CPU/memória por slot, janela curta de convivência e slot anterior encerrado após validação.
 - **[Healthcheck profundo pode reprovar deploys por dependência instável]** → dependências obrigatórias separadas de opcionais no endpoint; timeouts e tentativas explícitos; logs do motivo da reprovação.
-- **[Swarm em nó único tem recursos limitados de reconstrução]** → `releases.jsonl`, manifests versionados e runbook de recuperação do próprio Swarm.
+- **[Swarm em nó único tem recursos limitados de reconstrução]** → `releases.jsonl`, manifests em `deploy/` versionados e runbook de recuperação do próprio Swarm.
 - **[Migrations de banco fora do rollback automático]** → regra de compatibilidade retrospectiva (expand/contract) e passo de migração no runbook antes do deploy.
 - **[Retenção de logs pode esgotar disco]** → limite de retenção e tamanho no Loki, alerta de uso de disco.
 - **[Prazo de 2 semanas]** → escopo priorizado nos critérios de aceite; métricas de infraestrutura e tracing ficam para depois.

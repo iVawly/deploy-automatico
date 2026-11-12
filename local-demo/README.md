@@ -109,7 +109,9 @@ docker stack services demo-platform
 No Uptime Kuma, crie dois monitores para `demo-app`:
 
 - `https://demo.127.0.0.1.nip.io/` (disponibilidade pública, aceitar certificado inválido).
-- `http://demo-platform_traefik:8081/ping` (saúde interna do Traefik; retorna `OK`). Use `<DEMO_STACK>_traefik` se você mudou `DEMO_STACK`.
+- `http://demo-platform_traefik:8081/health` (saúde profunda do slot ativo). Envie o cabeçalho `Host: demo.127.0.0.1.nip.io` e use a palavra-chave `"status":"healthy"`. Use `<DEMO_STACK>_traefik` se você mudou `DEMO_STACK`.
+
+O endpoint `/ping` do Traefik testa apenas o proxy; não cobre a aplicação.
 
 No Grafana, a datasource Loki já está provisionada. Consultas:
 

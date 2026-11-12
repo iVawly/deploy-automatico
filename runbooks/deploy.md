@@ -49,7 +49,7 @@ Toda entrega de uma nova versão de aplicação em produção. Deploy manual no 
 | Testes ou gitleaks | Corrija o código, abra novo PR; nenhuma versão foi implantada |
 | Build/push | Verifique log da etapa; versão ativa não foi alterada |
 | Saúde do candidato | Pipeline falha; tráfego permanece na versão anterior; investigue logs do slot candidato |
-| Validação pública | A rota é restaurada automaticamente; verifique Traefik e DNS |
+| Validação pública | A rota é restaurada automaticamente (com `APP_VERIFY_PUBLIC=1`, padrão); verifique Traefik e DNS |
 | Deploy concluído mas comportamento errado | Execute o [rollback](rollback.md) |
 
 Consulte `runbooks/incidentes.md` se o serviço ativo estiver indisponível.

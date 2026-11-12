@@ -40,10 +40,10 @@ sudo -u deployer ops-deploy bootstrap demo-app 1.0.0 --digest sha256:<hash>
 1. Verifica a saúde do slot ativo (pré-condição).
 2. Baixa a imagem imutável `APP_IMAGE_REPO:<versao>@sha256:<hash>`.
 3. Recria o slot inativo com a configuração atual e aguarda o healthcheck profundo.
-4. Troca a rota do Traefik de forma atômica e valida o hostname público.
-5. Registra a release, incluindo o digest, e reduz o slot anterior a zero (após `OPS_DEPLOY_DRAIN_SECONDS`).
+4. Troca a rota do Traefik de forma atômica e valida o hostname público (quando `APP_VERIFY_PUBLIC=1`).
+5. Registra a release, incluindo o digest, e reduz o slot anterior a zero após `OPS_DEPLOY_DRAIN_SECONDS`, salvo `APP_KEEP_PREVIOUS=1`.
 
-Qualquer falha antes da troca mantém o tráfego no slot ativo. Falha na validação pública restaura a rota anterior.
+Qualquer falha antes da troca mantém o tráfego no slot ativo. Com `APP_VERIFY_PUBLIC=1`, falha na validação pública restaura a rota anterior.
 
 ```bash
 sudo -u deployer ops-deploy deploy demo-app 1.4.0 --digest sha256:<hash>
@@ -58,7 +58,7 @@ sudo -u deployer ops-deploy rollback demo-app
 sudo -u deployer ops-deploy rollback demo-app 1.3.2
 ```
 
-Falha de saúde **antes** da troca preserva a versão atual. Falha de saúde **depois** da troca mantém a versão restaurada para diagnóstico e envia alerta crítico.
+Falha de saúde **antes** da troca preserva a versão atual. Falha de validação pública **depois** da troca mantém a versão restaurada para diagnóstico e envia alerta crítico quando `OPS_DEPLOY_ALERT_WEBHOOK` está definido.
 
 ### recover
 
@@ -81,9 +81,9 @@ Código de saída 0 somente quando o corpo indica `"status":"healthy"`.
 
 ### status
 
-Mostra versão/slot ativos, as versões estáveis disponíveis para rollback (até
-`APP_KEEP_VERSIONS`, padrão 5, com data de implantação e saúde registrada), as
-últimas releases e o estado dos serviços.
+Mostra versão/slot ativos, as últimas versões estáveis (`APP_KEEP_VERSIONS`,
+padrão 5, com data de implantação e saúde registrada), as últimas releases e o
+estado dos serviços.
 
 ```bash
 sudo -u deployer ops-deploy status demo-app
@@ -109,7 +109,7 @@ deploy, não uma sonda ao vivo):
 | `APP_HEALTH_PATH` | não | Padrão `/health` |
 | `APP_VOLUME` | não | Volume Docker preservado entre releases |
 | `APP_MOUNT_PATH` | não | Padrão `/data` |
-| `APP_SECRETS` | não | Nomes de Docker Secrets a montar; devem começar por letra/número |
+| `APP_SECRETS` | não | Nomes de Docker Secrets a montar; validados antes de qualquer alteração no serviço |
 | `APP_NETWORK` | não | Padrão `public` |
 | `APP_HEALTH_TIMEOUT` | não | Padrão 5 segundos |
 | `APP_HEALTH_RETRIES` | não | Padrão 12 tentativas |
@@ -117,7 +117,7 @@ deploy, não uma sonda ao vivo):
 | `APP_PUBLIC_CHECK_PATH` | não | Caminho validado após a troca (padrão `/`) |
 | `APP_VERIFY_PUBLIC` | não | `1` para validar via Traefik |
 | `APP_KEEP_PREVIOUS` | não | `1` mantém o slot anterior em execução |
-| `APP_KEEP_VERSIONS` | não | Versões estáveis listadas para rollback (padrão `5`) |
+| `APP_KEEP_VERSIONS` | não | Versões estáveis exibidas no `status` (padrão `5`); o ledger não é podado |
 | `APP_READ_ONLY` | não | `1` monta o rootfs read-only (padrão) |
 | `APP_MEMORY_LIMIT` | não | Limite de memória (padrão `256M`) |
 | `APP_CPU_LIMIT` | não | Limite de CPU (padrão `0.50`) |

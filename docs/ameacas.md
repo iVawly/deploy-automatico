@@ -30,11 +30,11 @@
 | Categoria | Cenário | Controle | Residual |
 |---|---|---|---|
 | Spoofing | acesso ao dashboard com credencial fraca | basic auth com hash, TLS, rate limit | força bruta/distribuída; usar SSO no futuro |
-| Tampering | imagem/tag trocada sem revisão | SemVer, digest, SHA de actions, SBOM/proveniência, Cosign | comprometimento da conta GitHub/registry |
+| Tampering | imagem/tag trocada sem revisão | SemVer, digest, SHA de actions, SBOM/proveniência e assinatura Cosign (o deploy não verifica a assinatura) | comprometimento da conta GitHub/registry |
 | Repudiation | não saber quem implantou | ledger com autor, commit, checksum; logs do runner | logs podem ser apagados por root |
 | Information disclosure | segredo em Git/log/histórico | Gitleaks, Docker Secrets, `__FILE`, `.env` ignorado, logs sem valores | vazamento por aplicação mal escrita |
 | Denial of service | flood no edge ou disco cheio | rate limit, limites de recursos, retenção Loki, alerta de disco | DDoS volumétrico; sem scrubber/WAF dedicado |
-| Elevation of privilege | container escapa ou usa socket | rootfs read-only, cap-drop, socket proxy, usuário não-root na app | kernel/Docker 0-day; runner root-equivalent |
+| Elevation of privilege | container escapa ou usa socket | rootfs read-only, cap-drop, slots sem socket do Docker, socket proxy no Alloy e usuário não-root na app | kernel/Docker 0-day; runner root-equivalent |
 | Supply chain | dependência/ação maliciosa | versões/digests fixos, Dependabot, CodeQL, Trivy, revisão humana | ataque ao upstream antes do pin |
 | Insider | operador altera produção sem revisão | environment, branch protection, ledger, runbooks | root sempre pode contornar |
 

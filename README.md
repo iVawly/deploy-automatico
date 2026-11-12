@@ -16,7 +16,7 @@ quê, com qual commit e configuração.
 ## O que entrega
 
 - **Blue-green com health gate**: dois slots, validação profunda, troca de rota
-  e rollback automático em falha.
+  e restauração automática da rota quando a validação pública falha.
 - **CLI operacional**: `deploy`, `rollback`, `verify`, `status` e `bootstrap`,
   com lock e ledger JSONL.
 - **Edge seguro**: Traefik com ACME, TLS 1.2+, HSTS, headers, rate limit e
@@ -140,6 +140,8 @@ local-demo/                    demonstração local do fluxo completo
 - Sem orquestração de migração de banco; rollback de aplicação pressupõe
   compatibilidade de dados.
 - O demo local usa TLS self-signed e registry local; não é produção.
+- O pipeline gera assinatura Cosign, mas o deploy não executa `cosign verify`;
+  a garantia atual vem do digest e da revisão do workflow.
 - O Traefik não gera `X-Request-ID`; sem cabeçalho de entrada, a correlação usa
   serviço + janela de tempo.
 - A implantação real ainda precisa de DNS, credenciais, runner e aceite no host.

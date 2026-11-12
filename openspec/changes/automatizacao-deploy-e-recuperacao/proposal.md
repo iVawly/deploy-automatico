@@ -8,7 +8,7 @@ As aplicações internas da empresa são atualizadas manualmente por um único m
 
 - Pipeline de integração e entrega contínua que, a cada versão aprovada no Git, executa testes automatizados, constrói a imagem e só implanta se todas as etapas passarem.
 - Implantação em containers Docker com versionamento imutável e troca controlada de tráfego, de modo que uma versão doente nunca substitua silenciosamente uma versão saudável.
-- Verificação de saúde profunda (dependências reais, não apenas processo vivo) antes e depois de cada implantação, com bloqueio automático da promoção em caso de falha.
+- Verificação de saúde profunda (dependências reais, não apenas processo vivo) antes da promoção e validação pública após a troca, com bloqueio automático da promoção em caso de falha.
 - Rollback com um único comando para a última versão estável conhecida, usando artefatos já construídos, sem reconstrução manual.
 - Monitoramento de disponibilidade por serviço, painel único e envio de alertas quando um serviço deixar de responder.
 - Centralização de logs de aplicação e do pipeline em um ponto único de consulta, com correlação por versão e serviço.

@@ -19,7 +19,7 @@
 
 ## Alerta de indisponibilidade
 
-1. Confirme no painel se é falha isolada ou persistente (2 minutos).
+1. Confirme no painel se é falha isolada ou persistente (cerca de 90 segundos).
 2. Execute:
 
    ```bash
@@ -34,8 +34,8 @@
 
 ## Antiduplicação e recuperação
 
-- O Uptime Kuma está configurado para não reenviar o mesmo alerta a cada verificação.
-- A recuperação envia notificação separada.
+- Configure o Uptime Kuma para não reenviar o mesmo alerta a cada verificação.
+- Habilite a notificação de recuperação para o mesmo canal.
 - Não silencie o monitor sem registrar o motivo no canal da equipe.
 
 ## Teste do canal

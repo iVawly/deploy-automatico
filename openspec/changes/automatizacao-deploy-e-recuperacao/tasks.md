@@ -42,10 +42,10 @@
 ## 5. Monitoramento, alertas e logs
 
 - [ ] 5.1 Implantar Uptime Kuma em serviço Swarm com volume persistente, conta administrativa e canal de alerta configurado; verificar que o painel abre autenticado e que o teste de notificação é entregue
-- [ ] 5.2 Cadastrar monitores HTTP a cada 60 segundos para URL pública e health endpoint de cada aplicação, com retentativa de 2 minutos e link para o runbook; verificar que a lista de monitores cobre todas as aplicações do inventário
+- [ ] 5.2 Cadastrar monitores HTTP a cada 30 segundos para URL pública e health endpoint de cada aplicação, com três retentativas (alerta após ~90s) e link para o runbook; verificar que a lista de monitores cobre todas as aplicações do inventário
 - [ ] 5.3 Configurar notificação de recuperação e antiduplicação de alerta; verificar derrubando e restaurando uma aplicação de ensaio e conferindo exatamente um alerta e uma recuperação
 - [ ] 5.4 Provar que o monitoramento sobrevive a deploy e a reinício de aplicação; verificar que as verificações continuam registradas durante um deploy da aplicação piloto
-- [ ] 5.5 Implantar Grafana, Loki e Alloy com volume persistente, coleta por socket Docker e rótulos `app`, `slot`, `version`, `service`; verificar que os logs de uma aplicação aparecem no Grafana em até 30 segundos
+- [ ] 5.5 Implantar Grafana, Loki e Alloy com volume persistente, coleta via `docker-socket-proxy` somente leitura e rótulos `app`, `slot`, `version`, `service`; verificar que os logs de uma aplicação aparecem no Grafana em até 30 segundos
 - [ ] 5.6 Configurar retenção de 30 dias e limite de disco no Loki com alerta de uso; verificar a política por consulta de configuração e por simulação de rotação
 - [ ] 5.7 Configurar o Traefik e as aplicações para propagar `X-Request-ID`; verificar a correlação de uma requisição entre proxy e aplicação pelos logs
 - [ ] 5.8 Adicionar mascaramento de segredos nos logs (aplicação e pipeline) e verificar que uma execução com segredo fictício não expõe o valor no Loki nem no log do job
@@ -64,9 +64,9 @@
 ## 7. Rollback, retenção e recuperação
 
 - [x] 7.1 Registrar releases com versão, commit, slot, autor, horário, resultado e checksum em `releases.jsonl`; verificar que um deploy e um rollback geram registros distintos e auditáveis
-- [x] 7.2 Garantir a retenção das 5 últimas versões estáveis por aplicação no ledger (`APP_KEEP_VERSIONS`); verificar que `status` lista as versões com data e saúde registrada
+- [x] 7.2 Listar as 5 últimas versões estáveis por aplicação no `status` (`APP_KEEP_VERSIONS`); verificar que `status` mostra as versões com data e saúde registrada
 - [ ] 7.8 Configurar a retenção das 5 últimas versões estáveis por aplicação no GHCR (limpeza de pacotes/tags antigas); verificar que as tags fora da janela são removidas sem afetar rollback
-- [ ] 7.3 Executar drill de deploy defeituoso com rollback automático e medir o tempo de retorno; verificar que a versão estável anterior volta a atender e que o evento é registrado
+- [ ] 7.3 Executar drill de deploy defeituoso com restauração automática da rota e medir o tempo de retorno; verificar que a versão estável anterior volta a atender e que o evento é registrado
 - [ ] 7.4 Executar drill de rollback manual para uma versão anterior específica; verificar conclusão em até 5 minutos, saúde confirmada e volume de dados preservado
 - [ ] 7.5 Testar falha durante o próprio rollback; verificar que a versão restaurada é mantida para diagnóstico e que um alerta crítico com link de runbook é emitido
 - [ ] 7.6 Testar indisponibilidade de dependência externa e de disco cheio em ambiente de ensaio; verificar que o monitoramento alerta, os logs permitem identificar a causa e o servidor não perde o serviço ativo
