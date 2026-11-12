@@ -298,6 +298,16 @@ bootstrap() {
   grep -q 'type=tmpfs,destination=/tmp,tmpfs-size=16777216' "$SHIM_LOG"
 }
 
+@test "deploy falls back when service create lacks --security-opt" {
+  bootstrap
+  : >"$SHIM_LOG"
+  run env SHIM_DOCKER_NO_SECURITY_OPT=1 "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no-new-privileges"* ]]
+  ! grep -q -- '--security-opt no-new-privileges:true' "$SHIM_LOG"
+  grep -q -- '--cap-drop ALL' "$SHIM_LOG"
+}
+
 @test "dry-run bootstrap does not create services, routes or ledger entries" {
   run env OPS_DEPLOY_DRY_RUN=1 OPS_DEPLOY_PROBE_MODE=docker "$OPS" bootstrap test-app 1.0.0
   [ "$status" -eq 0 ]

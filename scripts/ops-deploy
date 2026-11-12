@@ -313,17 +313,19 @@ previous_stable_version() {
 # Prints the most recent success line for each distinct stable version, newest
 # first, limited to APP_KEEP_VERSIONS entries.
 stable_version_lines() {
-  local app="$1" limit="$APP_KEEP_VERSIONS" line version seen=" " count=0
+  local app="$1" limit="$APP_KEEP_VERSIONS" line version seen=" " count=0 data
+  data="$(ledger_for_app "$app" | grep -F '"result":"success"' | tac)"
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     version="$(json_field "$line" version)"
     [[ -n "$version" ]] || continue
     [[ "$seen" == *" $version "* ]] && continue
     seen+="$version "
-    printf '%s\n' "$line"
-    count=$((count + 1))
-    [[ "$count" -lt "$limit" ]] || break
-  done < <(ledger_for_app "$app" | grep -F '"result":"success"' | tac)
+    if [[ "$count" -lt "$limit" ]]; then
+      printf '%s\n' "$line"
+      count=$((count + 1))
+    fi
+  done <<<"$data"
 }
 
 version_is_stable() {
@@ -469,6 +471,18 @@ service_exists() {
   docker service inspect "$svc" >/dev/null 2>&1
 }
 
+security_opt_supported() {
+  [[ "$DRY_RUN" == "1" ]] && return 1
+  if [[ -z "${SERVICE_SECURITY_OPT_SUPPORTED:-}" ]]; then
+    if docker service create --help 2>/dev/null | grep -q -- '--security-opt'; then
+      SERVICE_SECURITY_OPT_SUPPORTED=1
+    else
+      SERVICE_SECURITY_OPT_SUPPORTED=0
+    fi
+  fi
+  [[ "$SERVICE_SECURITY_OPT_SUPPORTED" == "1" ]]
+}
+
 scale_service() {
   local svc="$1" replicas="$2"
   service_exists "$svc" || return 0
@@ -508,13 +522,17 @@ deploy_slot() {
     --env "APP_VERSION=$version"
     --env "APP_PORT=$APP_PORT"
     --init
-    --security-opt no-new-privileges:true
     --stop-grace-period "$APP_STOP_GRACE_PERIOD"
     --mount "type=tmpfs,destination=/tmp,tmpfs-size=$APP_TMPFS_SIZE,tmpfs-mode=1777"
     --log-driver json-file
     --log-opt "max-size=$APP_LOG_MAX_SIZE"
     --log-opt "max-file=$APP_LOG_MAX_FILE"
   )
+  if security_opt_supported; then
+    args+=(--security-opt no-new-privileges:true)
+  else
+    warn "Docker não suporta --security-opt em 'service create'; no-new-privileges não será aplicado"
+  fi
   [[ "$APP_READ_ONLY" == "1" ]] && args+=(--read-only)
   [[ -n "$APP_CAP_DROP" ]] && args+=(--cap-drop "$APP_CAP_DROP")
   [[ -n "$APP_MEMORY_LIMIT" ]] && args+=(--limit-memory "$APP_MEMORY_LIMIT")
@@ -899,7 +917,8 @@ cmd_status() {
   fi
 
   if [[ "$as_json" == "1" ]]; then
-    local versions_json="" sep="" v s t d
+    local versions_json="" sep="" v s t d stable_lines
+    stable_lines="$(stable_version_lines "$app")"
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
       v="$(json_field "$line" version)"
@@ -908,7 +927,7 @@ cmd_status() {
       d="$(json_field "$line" digest)"
       versions_json+="${sep}{\"version\":\"$(json_escape "$v")\",\"slot\":\"$(json_escape "$s")\",\"digest\":\"$(json_escape "$d")\",\"deployed_at\":\"$(json_escape "$t")\",\"healthy\":true}"
       sep=","
-    done < <(stable_version_lines "$app")
+    done <<<"$stable_lines"
     printf '{"app":"%s","active_version":"%s","active_slot":"%s","active_digest":"%s","since":"%s","retention_limit":%s,"stable_versions":[%s]}\n' \
       "$(json_escape "$app")" "$(json_escape "$version")" "$(json_escape "$slot")" "$(json_escape "$digest")" "$(json_escape "$ts")" \
       "$APP_KEEP_VERSIONS" "$versions_json"
@@ -923,13 +942,14 @@ cmd_status() {
   fi
 
   printf '\nversões estáveis disponíveis (até %s):\n' "$APP_KEEP_VERSIONS"
-  local found=0
+  local found=0 stable_lines
+  stable_lines="$(stable_version_lines "$app")"
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     found=1
     printf '  %s slot=%s saudável=sim implantada=%s\n' \
       "$(json_field "$line" version)" "$(json_field "$line" slot)" "$(json_field "$line" ts)"
-  done < <(stable_version_lines "$app")
+  done <<<"$stable_lines"
   [[ "$found" == "1" ]] || printf '  (sem versões estáveis)\n'
 
   printf '\núltimas releases:\n'
@@ -945,10 +965,10 @@ cmd_status() {
   fi
 
   if command -v docker >/dev/null 2>&1 && [[ "$DRY_RUN" != "1" ]]; then
-    printf '\nserviços:\n'
-    docker service ps --no-trunc \
+    printf '\nservi��os:\n'
+    docker service ls \
       --filter "label=opsdeploy_app=$app" \
-      --format '  {{.Name}} {{.CurrentState}} {{.Error}}' 2>/dev/null | head -n 6 || true
+      --format '  {{.Name}} {{.Replicas}} {{.Image}}' 2>/dev/null | head -n 6 || true
   fi
 }
 

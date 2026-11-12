@@ -24,6 +24,11 @@ case "$cmd" in
         [[ -f "$SHIM_STATE/services/$name" ]]
         ;;
       create)
+        if [[ "${1:-}" == "--help" ]]; then
+          printf 'Options:\n'
+          [[ "${SHIM_DOCKER_NO_SECURITY_OPT:-}" == "1" ]] || printf '      --security-opt list   Security options\n'
+          exit 0
+        fi
         [[ "${SHIM_DOCKER_FAIL_CREATE:-}" == "1" ]] && exit 1
         name=""
         image=""
@@ -75,6 +80,9 @@ case "$cmd" in
         ;;
       ps)
         printf 'test-service  Running  \n'
+        ;;
+      ls)
+        printf 'test-service 1/1 test-image\n'
         ;;
       *)
         exit 1

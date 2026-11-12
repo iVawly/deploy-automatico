@@ -131,8 +131,10 @@ deploy, não uma sonda ao vivo):
 ## Hardening do serviço
 
 Cada slot é criado com rootfs read-only, todas as
-capabilities removidas, `no-new-privileges`, `/tmp` em tmpfs, limites de
-CPU/memória/PIDs, `init` como PID 1, `stop-grace-period` e rotação de logs. A aplicação deve
+capabilities removidas, `/tmp` em tmpfs, limites de
+CPU/memória/PIDs, `init` como PID 1, `stop-grace-period` e rotação de logs. O CLI aplica
+`no-new-privileges` quando o Docker suporta a flag; caso contrário, avisa e
+mantém os demais controles. A aplicação deve
 gravar apenas no volume montado em `APP_MOUNT_PATH` (padrão `/data`). Se a
 imagem precisar de rootfs gravável, defina `APP_READ_ONLY=0` de forma
 consciente e documente o motivo no PR.

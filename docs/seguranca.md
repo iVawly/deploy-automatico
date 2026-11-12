@@ -21,8 +21,12 @@
 
 ## Containers
 
+O CLI aplica `--security-opt no-new-privileges:true` quando o Docker suporta
+essa flag em `service create`; caso contrário, avisa e mantém `cap-drop ALL`,
+rootfs read-only, limites de recursos e usuário não-root.
+
 - Slots de aplicação: rootfs read-only, `cap-drop ALL`,
-  `--security-opt no-new-privileges:true`, `/tmp` em tmpfs, limites de
+  `/tmp` em tmpfs, limites de
   CPU/memória/PIDs e rotação de logs; sem acesso ao socket do Docker. A imagem
   deve rodar com usuário não-root.
 - Plataforma: rootfs read-only onde suportado, capabilities mínimas e limites de recursos.

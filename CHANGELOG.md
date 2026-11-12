@@ -39,6 +39,11 @@ Versionamento SemVer para o CLI e para a plataforma.
 
 ### Fixed
 
+- `ops-deploy` não falha mais quando `docker service create` não expõe
+  `--security-opt`; o `no-new-privileges` é aplicado quando disponível e o CLI
+  avisa quando não for.
+- `ops-deploy status` volta a listar os serviços da aplicação usando
+  `docker service ls` com filtro por label.
 - CLI instalado por symlink resolve o repositório em `/opt/deploy-platform`.
 - Bootstrap funciona a partir do diretório instalado, independente do `cwd`.
 - Workflow de deploy do `demo-app` na raiz do monorepo (tag `demo-app-v*`).

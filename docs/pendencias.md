@@ -26,7 +26,8 @@ Legenda: `[x]` resolvido (com validação)
 ## Médios
 
 - [x] **M1 — `no-new-privileges` ausente e doc incorreta.** Slots usam
-  `--security-opt no-new-privileges:true`; `docs/seguranca.md` e
+  `--security-opt no-new-privileges:true` quando o Docker suporta;
+  `docs/seguranca.md` e
   `docs/ops-deploy.md` corrigidos.
 - [x] **M2 — Corrida no `deploy_slot`.** Após `service rm`, o CLI aguarda o
   serviço sumir (`wait_service_absent`) antes de recriar, com retry no create.
