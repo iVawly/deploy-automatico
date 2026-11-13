@@ -3,7 +3,7 @@
 ## Resumo
 
 Este relatório descreve o teste de ponta a ponta feito com o `ops-deploy` usando
-uma aplicação real: o site estático do Wotan. O objetivo foi validar o fluxo
+uma aplicação real: o site estático. O objetivo foi validar o fluxo
 completo em um Docker Engine Linux com Swarm, e não apenas os testes com dublês.
 
 Resultado: o fluxo principal passou. Bootstrap, deploy saudável, verificação
