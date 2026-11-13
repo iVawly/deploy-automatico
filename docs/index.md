@@ -16,7 +16,7 @@
 - [Recuperação e autolock](../runbooks/recuperacao.md)
 - [Homologação em Ubuntu 24.04](../runbooks/homologacao.md)
 - [CLI ops-deploy](ops-deploy.md)
-- [Relatório do teste real com o Wotan](relatorio-teste-wotan.md)
+- [Relatório do teste real com site institucional](relatorio-teste-site-institucional.md)
 
 ## Arquitetura e risco
 
