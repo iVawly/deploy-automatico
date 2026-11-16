@@ -3,7 +3,7 @@
 # Images are pinned by digest so the demo is reproducible.
 services:
   registry:
-    image: registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    image: registry:3.1.2@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
     ports:
       - "5000:5000"
     volumes:
@@ -22,7 +22,7 @@ services:
           - node.role == manager
 
   traefik:
-    image: traefik:v3.7.16@sha256:1336e85aaed293bd63d005086e0dd013b04078b26aaeb1c18b26a2f928af7e65
+    image: traefik:v3.7.18@sha256:9c437ac4f09ce6f4980a8544902d3475fdf70a1a7c578729581d2535dfa7d635
     command:
       - --configFile=/etc/traefik/traefik.yml
       - --ping=true
@@ -66,7 +66,7 @@ services:
           - node.role == manager
 
   uptime-kuma:
-    image: louislam/uptime-kuma:2.5.8@sha256:20abea8c48a163cf0a7a5d5936ab418e4b742d908704e1f58f6c06e56a9c6b67
+    image: louislam/uptime-kuma:2.5.11@sha256:7554dba313c84e44fee921ef3b5626ba1c711e412e82815e8c957517026112a9
     volumes:
       - uptime_data:/app/data
       - /tmp
@@ -85,7 +85,7 @@ services:
           - node.role == manager
 
   loki:
-    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    image: grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
       - ${PLATFORM_ROOT}/deploy/logging/loki-config.yml:/etc/loki/loki-config.yml:ro
@@ -148,7 +148,7 @@ services:
           - node.role == manager
 
   alloy:
-    image: grafana/alloy:v1.21.2@sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18
+    image: grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
     command:
       - run
       - /etc/alloy/config.alloy
@@ -174,7 +174,7 @@ services:
           - node.role == manager
 
   grafana:
-    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
