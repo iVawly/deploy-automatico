@@ -80,9 +80,12 @@ O usuário `deployer` pertence ao grupo `docker`, o que equivale a root no host.
 
 - Chave de autolock do Swarm e senhas de inicialização ficam em cofre fora do servidor.
 - Backup de configuração com `scripts/server/backup-config.sh`, checksum SHA-256 e retenção de 30 dias, copiado para fora do host.
-- Restauração com `scripts/server/restore-config.sh`, que valida o checksum,
-  recusa caminhos perigosos, symlinks, hardlinks e tipos especiais, e extrai
-  sem preservar o owner do arquivo.
+- Restauração com `scripts/server/restore-config.sh`, que valida o checksum
+  quando o `.sha256` existe, recusa caminhos perigosos, symlinks, hardlinks,
+  tipos especiais e arquivos sem itens conhecidos, e extrai sem preservar o owner
+  do arquivo. Antes de substituir qualquer item, cria um backup
+  `pre-restore-*` verificável; se isso falhar, aborta sem alterar o host. O
+  override `RESTORE_ALLOW_NO_BACKUP=1` é auditado e reservado a emergência.
 - Teste de restauração registrado em `docs/aceite.md`.
 
 ## Resposta a vazamento

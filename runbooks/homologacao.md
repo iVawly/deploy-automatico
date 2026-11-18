@@ -222,7 +222,9 @@ APP_DOMAIN=<APP_DOMAIN>
 APP_IMAGE_REPO=ghcr.io/<OWNER>/demo-app
 ```
 
-Mantenha `APP_VERIFY_PUBLIC=1` para validar a rota pública após a troca.
+Mantenha `APP_VERIFY_PUBLIC=1` e `APP_PUBLIC_EXPECT_VERSION=1` para validar a
+rota pública e a versão servida após a troca (o `app.conf` do repositório já traz
+os dois). O demo-app expõe `"version"` em `/` e em `/health`.
 
 ## 7. Subir a plataforma
 
@@ -496,6 +498,6 @@ Para reconstruir a plataforma sem apagar dados, siga
 | `docker pull` do GHCR falha | login do `deployer`, visibilidade do pacote, escopo do token |
 | Runner offline | `systemctl status actions.runner.*`, labels, grupo `docker` |
 | Swarm bloqueado após reboot | `sudo docker swarm unlock` |
-| `bootstrap` recusado | já existe release estável; use `deploy` |
+| `bootstrap` recusado | já existe release estável ou rota para a aplicação; use `deploy` ou reconcilie |
 | Porta 80/443 ocupada | `ss -lntp` e `docker service ls` |
 | Alerta demora mais de 2 min | intervalo/retries do monitor e canal de notificação |

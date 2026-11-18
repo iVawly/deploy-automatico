@@ -183,3 +183,9 @@ Legenda: `[x]` resolvido (com validação)
   `shellcheck`, `bash -n`, `bats` (40 testes), `docker compose config` e
   `python3 -m unittest` (10 testes). Auditoria ampla encerrada; próximos ajustes
   somente mediante falha concreta ou mudança de requisito.
+- 2026-11-18: rodada de coerência pós-correções. O CLI ganhou verificação de
+  versão nas sondas, `doctor`/`reconcile`, reparo de ledger e validação
+  antecipada de recursos; o restore passou a ser fail-closed com backup
+  `pre-restore` verificado; docs, runbooks, changelog e demo local foram
+  alinhados ao comportamento real (incluindo `recover --from-ledger` e o
+  override explícito para o wotan).

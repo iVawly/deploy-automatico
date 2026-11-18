@@ -49,11 +49,20 @@ sudoedit /opt/deploy-platform/.env
 sudo /opt/deploy-platform/scripts/bootstrap-platform.sh
 ```
 
-O script valida o checksum pelo hash, recusa caminhos absolutos/`..`, symlinks,
-hardlinks e tipos especiais, cria um backup `pre-restore-*` (incluindo o `.env`
-atual, se existir) e restaura `dynamic/`, `deploy/`, `runbooks/`, `docs/`, o
-ledger de releases e o `.env` quando presente no arquivo. A extração usa
-`--no-same-owner`; volumes de dados continuam fora do backup.
+O script valida o checksum quando `<arquivo>.sha256` existe, recusa caminhos
+absolutos/`..`, symlinks, hardlinks, tipos especiais e arquivos sem itens
+conhecidos, e só então cria um backup `pre-restore-*` fail-closed (tar +
+listagem de cobertura + checksum; inclui o `.env` atual, se existir) antes de
+substituir `dynamic/`, `deploy/`, `runbooks/`, `docs/`, o ledger de releases e o
+`.env` quando presente no arquivo. Cada item é trocado via diretório temporário
+e `mv`, preservando o anterior se a ativação falhar.
+
+Se o backup pré-restauração não puder ser criado, o restore aborta sem remover
+nada. O override explícito `RESTORE_ALLOW_NO_BACKUP=1` pula esse backup, registra
+a decisão em `$BACKUP_DIR/restore-audit.log` e deve ser usado apenas em
+emergência consciente. `BACKUP_DIR` (padrão `/var/backups/ops-deploy`) precisa
+ser um diretório. A extração usa `--no-same-owner`; volumes de dados continuam
+fora do backup.
 
 ## Restaurar dados persistentes
 
@@ -78,8 +87,13 @@ docker run --rm \
 sudo -u deployer ops-deploy recover <app>
 ```
 
-`recover` recria o slot ativo a partir do ledger restaurado, usando o digest
-registrado. Se o ledger não tiver uma release ativa, faça o primeiro deploy com
+`recover` recria o slot **desejado** a partir da rota restaurada, usando o
+digest registrado. Se a rota não existir, o comando recusa; use
+`ops-deploy recover <app> --from-ledger` para recuperar explicitamente a última
+release estável do ledger. Divergência rota × ledger pode ser diagnosticada com
+`ops-deploy doctor <app>` e resolvida explicitamente com `ops-deploy reconcile
+<app> --accept-route|--accept-ledger`. Se não houver rota nem release ativa,
+faça o primeiro deploy com
 `sudo -u deployer ops-deploy bootstrap <app> <versao> --digest sha256:<hash>`.
 Confirme a saúde e a integridade dos dados antes de liberar o tráfego.
 

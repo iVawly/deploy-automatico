@@ -21,6 +21,15 @@ Versionamento SemVer para o CLI e para a plataforma.
   automáticas.
 - Backup com checksum/retenção e restore com validação de caminho; symlinks,
   hardlinks e tipos especiais no tar são recusados antes da extração.
+- Restore fail-closed: valida o checksum quando presente, recusa arquivos sem
+  itens conhecidos, exige `BACKUP_DIR` válido e cria backup `pre-restore-*`
+  verificado (tar + cobertura + SHA-256) antes de substituir qualquer item;
+  `RESTORE_ALLOW_NO_BACKUP=1` é auditado em `restore-audit.log`.
+- CI bloqueia `local-demo/state` versionado; a allowlist do Gitleaks para esse
+  diretório foi removida.
+- `deploy`/`recover`/`rollback`/`bootstrap` validam rede e segredos Docker antes
+  de remover ou recriar serviços; tamanhos, CPU, duração, rede, volume, mount e
+  `cap-drop` inválidos falham em `load_app`.
 - `ops-deploy deploy`/`bootstrap` exigem digest (`sha256:...`); o ledger registra
   o digest e o pipeline passa o digest do build.
 - CI com Gitleaks, Trivy, Hadolint, actionlint, testes e smoke test da imagem;
@@ -68,6 +77,17 @@ Versionamento SemVer para o CLI e para a plataforma.
   esquerda.
 - `local-demo/docker-compose.yml` normalizado (sem espaços no EOF), restaurando
   `make lint-yaml`.
+- `deploy`/`rollback` exigem sonda pública que confirme a versão ativa e a
+  versão implantada; tráfego público divergente ou aplicação pendente do Traefik
+  bloqueia a mutação sem remover o slot em serviço.
+- Falha na validação pública da versão candidata restaura a rota anterior; falha
+  ao gravar o ledger após a troca emite alerta e exige `reconcile`.
+- `recover` recria a rota desejada por padrão; ledger só com `--from-ledger`.
+- Ledger repara/descarta registro final incompleto sob lock antes de cada append.
+- `bootstrap` recusa quando já existe rota para a aplicação, além de release
+  estável; restauração de rota é atômica.
+- `demo-app` e fixtures declaram `APP_PUBLIC_EXPECT_VERSION=1`, alinhando a
+  sonda pública ao novo gate de versão.
 
 ### Added
 
@@ -75,6 +95,17 @@ Versionamento SemVer para o CLI e para a plataforma.
   `CHANGELOG.md`, templates de issue/PR e configuração de pre-commit.
 - `ops-deploy status` lista as últimas `APP_KEEP_VERSIONS` versões estáveis
   (padrão 5) com data de implantação e saúde, e expõe `stable_versions` no JSON.
+- `ops-deploy doctor` (somente leitura) compara rota desejada, ledger, runtime e
+  sonda observada, com códigos de saída para divergência e estado não verificado.
+- `ops-deploy reconcile --accept-route|--accept-ledger` registra a decisão
+  explícita no ledger em vez de reverter por adivinhação.
+- `ops-deploy status` expõe `desired_version`, `desired_slot`, `desired_digest`,
+  `consistent`, `version_probe`, `last_action` e `last_result`; `verify` expõe
+  `expected_version`.
+- `APP_PUBLIC_EXPECT_VERSION=1` exige a versão no corpo da sonda pública;
+  `APP_HEALTH_EXPECT_VERSION=1` exige a versão no `/health`.
+- `OPS_DEPLOY_ALLOW_UNVERIFIED=1` permite deploy/rollback sem sonda pública de
+  versão de forma explícita e auditada.
 - `docs/arquitetura.md`, `docs/ameacas.md`, `docs/producao.md` e ADRs.
 - `scripts/server/harden-system.sh` e `scripts/server/restore-config.sh`.
 - `make lint-yaml`, `make lint-actions`, `make lint-docker`, `make build`,
@@ -84,9 +115,10 @@ Versionamento SemVer para o CLI e para a plataforma.
 
 - Stacks renomeadas para `deploy/docker-compose.yml` e
   `local-demo/docker-compose.yml` para o Dependabot acompanhar as imagens.
-- `ops-deploy` 1.2.0 aplica hardening padrão aos serviços, usa retry com
-  backoff em operações Docker, exige digest e lista versões estáveis no
-  `status`.
+- `ops-deploy` 1.3.0 adiciona verificação de versão nas sondas, modelo explícito
+  de estado (rota × ledger × runtime × observado), `doctor`/`reconcile` e
+  validação antecipada de recursos; mantém hardening padrão, retry com backoff,
+  digest obrigatório e versões estáveis no `status`.
 - README reescrito para quickstart, arquitetura, segurança e limites.
 - `docs/seguranca.md`, `docs/observabilidade.md`, `docs/ops-deploy.md` e
   runbooks atualizados.

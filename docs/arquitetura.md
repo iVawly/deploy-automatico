@@ -30,7 +30,7 @@ flowchart LR
 | Componente | Papel | Persistência |
 |---|---|---|
 | Traefik | TLS/ACME, roteamento, headers, rate limit | `traefik_letsencrypt` |
-| `ops-deploy` | Deploy, rollback, verify, status, ledger | `/var/lib/ops-deploy` |
+| `ops-deploy` | Deploy, rollback, recover, verify, status, doctor, reconcile e ledger | `/var/lib/ops-deploy` |
 | Slots blue/green | Duas cópias do serviço da aplicação | volume da aplicação |
 | Grafana | Consulta de logs | `grafana_data` |
 | Loki | Armazenamento de logs | `loki_data` |
@@ -45,15 +45,36 @@ flowchart LR
 2. A imagem é publicada no GHCR com SBOM/proveniência e assinatura Cosign keyless.
 3. `ops-deploy deploy <app> <versao> --digest sha256:<hash>` baixa a imagem por tag e digest.
 4. O slot inativo é recriado com a configuração atual e limites de segurança.
-5. O healthcheck profundo (`/health` + `status=healthy`) precisa passar.
+5. O healthcheck profundo (`/health` + `status=healthy`, e `version` quando
+   `APP_HEALTH_EXPECT_VERSION=1`) precisa passar.
 6. A rota do Traefik é trocada atomicamente via arquivo em `dynamic/`.
-7. O hostname público é validado (quando `APP_VERIFY_PUBLIC=1`); em falha, a
-   rota anterior é restaurada e o slot novo é reduzido a zero.
+7. O hostname público é validado (quando `APP_VERIFY_PUBLIC=1`, incluindo a
+   versão com `APP_PUBLIC_EXPECT_VERSION=1`); em falha, a rota anterior é
+   restaurada e o slot novo é reduzido a zero.
 8. Após a janela de drenagem, o slot anterior é reduzido, salvo
    `APP_KEEP_PREVIOUS=1`.
 
 O ledger `releases.jsonl` registra autor, commit, versão, slot, resultado e
 checksum da configuração. A operação é serializada por um lock.
+
+## Modelo de estado
+
+A rota gerada em `dynamic/<app>.yml` é o estado **desejado/configurado**; o
+Traefik a aplica de forma assíncrona. O ledger é o **histórico/auditoria**
+append-only, não a prova do que está sendo servido. O runtime (serviços Swarm) e
+o observado (sondas de saúde e pública) são verificados separadamente.
+
+`deploy` e `rollback` exigem rota × ledger consistentes e tráfego público
+confirmando a versão ativa (quando há sonda pública de versão); `deploy` também
+exige o slot ativo saudável. `rollback` pode ser usado quando a versão atual
+está doente, mas ainda exige confirmação pública do estado antes de agir e exige
+saúde do alvo antes da troca. Sem sonda pública que confirme versão, o estado é
+`unverified` e a mutação é recusada salvo `OPS_DEPLOY_ALLOW_UNVERIFIED=1`;
+`APP_HEALTH_EXPECT_VERSION=1` não substitui a sonda pública. Divergências são
+diagnosticadas por
+`ops-deploy doctor` e resolvidas explicitamente por `ops-deploy reconcile
+--accept-route|--accept-ledger`; não há reversão automática baseada em
+adivinhação.
 
 ## Fluxo de rollback
 
@@ -81,6 +102,10 @@ migração de dados: compatibilidade de schema é responsabilidade da aplicaçã
 | Healthcheck falha antes da troca | candidato é reduzido; rota não muda; falha registrada no ledger (sem webhook) |
 | Validação pública falha após a troca | rota anterior é restaurada e o slot novo é reduzido; falha registrada no ledger (sem webhook) |
 | Rollback falha após a troca | versão restaurada é mantida para diagnóstico; o CLI envia alerta crítico quando `OPS_DEPLOY_ALERT_WEBHOOK` está definido e registra `WARN` quando não está |
+| Rota e ledger divergem | `deploy`/`rollback` bloqueiam; `doctor` classifica e `reconcile` registra a decisão explícita |
+| Traefik ainda não aplicou a rota | `doctor` reporta `apply-pending`; `deploy`/`rollback` bloqueiam até o tráfego público confirmar a versão ativa |
+| Sem sonda pública que confirme versão | estado `unverified`; mutações recusadas salvo `OPS_DEPLOY_ALLOW_UNVERIFIED=1` (auditado) |
+| Ledger com registro final incompleto | reparo/descarte sob lock antes do próximo append; histórico íntegro |
 | Traefik reinicia | rotas vêm do file provider; serviços continuam |
 | Loki/Alloy indisponível | aplicação e deploy continuam; perda de logs durante a janela |
 | Disco cheio | monitor de disco alerta; Loki tem retenção e compactor |

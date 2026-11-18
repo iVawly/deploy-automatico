@@ -66,6 +66,13 @@ Para transformar o site em uma aplicação deployável:
 As imagens foram publicadas no registry local com tags imutáveis e digests
 registrados no ledger.
 
+> **Nota sobre o CLI atual (1.3.0):** o `/health` do wotan devolve JSON com
+> `version`, mas a página pública é HTML sem esse campo. Por isso o `app.conf`
+> mantém `APP_PUBLIC_EXPECT_VERSION=0` e futuros `deploy`/`rollback` do wotan
+> exigem `OPS_DEPLOY_ALLOW_UNVERIFIED=1` explícito; o `bootstrap` não passa por
+> esse gate. O `recover` usa a rota desejada por padrão e só consulta o ledger
+> com `--from-ledger`.
+
 ## Roteiro executado
 
 ### 1. Bootstrap da versão 1.0.0
@@ -134,7 +141,8 @@ foi restaurada, a rota foi atualizada e o evento ficou registrado no ledger.
 ### 6. Recover
 
 O slot ativo foi escalado para zero para simular a perda do serviço. Em
-seguida, o comando de recover recriou o serviço a partir do ledger.
+seguida, o comando de recover recriou o serviço a partir do estado registrado
+(rota desejada, com o ledger como referência de versão/digest).
 
 O health voltou a responder corretamente na versão registrada como ativa.
 
@@ -156,7 +164,7 @@ releases e os serviços da aplicação.
 | 2.0.0 (primeira) | Falso positivo do teste | Aceito porque o `index.html` padrão ainda existia; rollback executado |
 | 2.0.0 (corrigida) | Health retornando 503 | Recusado antes da troca; versão ativa preservada |
 | 1.0.1 | Rollback | Versão restaurada e registrada no ledger |
-| 1.0.2 | Recover | Serviço recriado a partir do ledger e saudável |
+| 1.0.2 | Recover | Serviço recriado a partir do estado registrado e saudável |
 
 ## Bugs encontrados e correções
 

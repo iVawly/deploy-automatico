@@ -20,8 +20,22 @@ case "$cmd" in
     shift || true
     case "$sub" in
       inspect)
-        name="${1:-}"
-        [[ -f "$SHIM_STATE/services/$name" ]]
+        name=""
+        format=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --format | -f) format="${2:-}"; shift 2 ;;
+            *) name="$1"; shift ;;
+          esac
+        done
+        [[ -n "$name" && -f "$SHIM_STATE/services/$name" ]] || exit 1
+        if [[ "$format" == *Replicas* ]]; then
+          if [[ -f "$SHIM_STATE/services/$name.replicas" ]]; then
+            cat "$SHIM_STATE/services/$name.replicas"
+          else
+            printf '1'
+          fi
+        fi
         ;;
       create)
         if [[ "${1:-}" == "--help" ]]; then
@@ -88,6 +102,24 @@ case "$cmd" in
         exit 1
         ;;
     esac
+    ;;
+  network|secret)
+    sub="${1:-}"
+    shift || true
+    [[ "$sub" == "inspect" ]] || exit 1
+    name="${1:-}"
+    [[ -n "$name" ]] || exit 1
+    if [[ "$cmd" == "network" && "${SHIM_DOCKER_MISSING_NETWORK:-}" == "$name" ]]; then
+      exit 1
+    fi
+    if [[ "$cmd" == "secret" ]]; then
+      missing_secrets=()
+      read -r -a missing_secrets <<< "${SHIM_DOCKER_MISSING_SECRETS:-}"
+      for missing in "${missing_secrets[@]}"; do
+        [[ "$name" == "$missing" ]] && exit 1
+      done
+    fi
+    exit 0
     ;;
   *)
     exit 1

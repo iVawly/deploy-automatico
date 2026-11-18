@@ -8,7 +8,6 @@ description = "Test fixtures, generated local state and documentation placeholde
 paths = [
   '''tests/fixtures/.*''',
   '''apps/demo-app/tests/.*''',
-  '''local-demo/state/.*''',
 ]
 regexes = [
   '''test_app_token''',

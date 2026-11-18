@@ -9,16 +9,17 @@ no healthcheck; a rota do Traefik troca atomicamente; se a validação pública
 falhar, a versão saudável continua no ar. O ledger registra quem implantou o
 quê, com qual commit e configuração.
 
-> **Status:** o fluxo está implementado e testado localmente. A execução no host
-> real (SSH, DNS, Swarm, GHCR, runner e aceite) ainda é pendente. Veja
+> **Status:** o fluxo está implementado e testado localmente (Docker Desktop com
+> Swarm, incluindo um teste com aplicação real). A execução no host Ubuntu real
+> (SSH, DNS, GHCR, runner e aceite) ainda é pendente. Veja
 > [`docs/producao.md`](docs/producao.md) e [`docs/aceite.md`](docs/aceite.md).
 
 ## O que entrega
 
 - **Blue-green com health gate**: dois slots, validação profunda, troca de rota
   e restauração automática da rota quando a validação pública falha.
-- **CLI operacional**: `deploy`, `rollback`, `verify`, `status` e `bootstrap`,
-  com lock e ledger JSONL.
+- **CLI operacional**: `deploy`, `rollback`, `recover`, `verify`, `status`,
+  `bootstrap`, `doctor` e `reconcile`, com lock e ledger JSONL.
 - **Edge seguro**: Traefik com ACME, TLS 1.2+, HSTS, headers, rate limit e
   dashboard com basic auth.
 - **Observabilidade**: Loki + Alloy + Grafana para logs estruturados e Uptime
@@ -107,7 +108,7 @@ CodeQL e Scorecard.
 ## Estrutura
 
 ```text
-scripts/ops-deploy             CLI de deploy/rollback/verify/status
+scripts/ops-deploy             CLI de deploy/rollback/recover/verify/status/doctor
 scripts/install.sh             instala o pacote em /opt/deploy-platform
 scripts/bootstrap-platform.sh  sobe proxy, monitoramento e logs
 scripts/server/                hardening, Docker, Swarm, runner, backup e restore

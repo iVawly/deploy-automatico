@@ -68,7 +68,7 @@ bootstrap() {
   grep -q '"app":"no-public".*"action":"bootstrap".*"result":"success"' "$SHIM_STATE/releases.jsonl"
 }
 
-@test "recover recreates the active slot from the release ledger" {
+@test "recover recreates the desired slot from the route" {
   bootstrap
   rm -f "$SHIM_STATE/services/app-test-app-blue" "$SHIM_STATE/services/app-test-app-blue.replicas"
   run "$OPS" recover test-app
@@ -142,7 +142,7 @@ bootstrap() {
 
 @test "deploy restores the previous route when the public check fails" {
   bootstrap
-  touch "$SHIM_STATE/public-fail"
+  echo 1.0.2 >"$SHIM_STATE/public-fail-version"
   run "$OPS" deploy test-app 1.0.2
   [ "$status" -eq 1 ]
   grep -q 'app-test-app-blue:8080' "$TEST_ROOT/dynamic/test-app.yml"
@@ -226,7 +226,7 @@ bootstrap() {
   bootstrap
   run "$OPS" deploy test-app 1.0.1
   [ "$status" -eq 0 ]
-  touch "$SHIM_STATE/public-fail"
+  echo 1.0.0 >"$SHIM_STATE/public-fail-version"
 
   run "$OPS" rollback test-app
   [ "$status" -eq 1 ]
@@ -427,4 +427,184 @@ bootstrap() {
     OPS_DEPLOY_DRAIN_SECONDS=30 "$OPS" deploy test-app 1.0.1
   [ "$status" -eq 0 ]
   [[ "$output" == *"DRY-RUN"* ]]
+}
+
+@test "doctor reports ok for a consistent desired, ledger, runtime and observed state" {
+  bootstrap
+  run "$OPS" doctor test-app --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"state":"ok"'* ]]
+  [[ "$output" == *'"consistent":true'* ]]
+  [[ "$output" == *'"runtime":{"status":"present","replicas":"1"}'* ]]
+  [[ "$output" == *'"observed":{"status":"ok","version":"1.0.0"}'* ]]
+}
+
+@test "doctor reports apply-pending and deploy is blocked while Traefik serves a stale version" {
+  bootstrap
+  echo 0.9.9 >"$SHIM_STATE/public-version"
+  run "$OPS" doctor test-app --json
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'"state":"apply-pending"'* ]]
+
+  route_before="$(cat "$TEST_ROOT/dynamic/test-app.yml")"
+  run "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"divergência observada"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-green" ]
+  [ "$(cat "$TEST_ROOT/dynamic/test-app.yml")" = "$route_before" ]
+}
+
+@test "deploy requires a version-confirming probe unless explicitly overridden" {
+  mkdir -p "$TEST_ROOT/apps/unverified"
+  sed -e 's/^APP_NAME=.*/APP_NAME=unverified/' \
+    -e 's/^APP_DOMAIN=.*/APP_DOMAIN=unverified.internal.example.com/' \
+    -e 's/^APP_PUBLIC_EXPECT_VERSION=.*/APP_PUBLIC_EXPECT_VERSION=0/' \
+    "$BATS_TEST_DIRNAME/fixtures/apps/test-app/app.conf" >"$TEST_ROOT/apps/unverified/app.conf"
+
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" bootstrap unverified 1.0.0
+  [ "$status" -eq 0 ]
+
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" deploy unverified 1.0.1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sem confirmação de versão servida"* ]]
+  [ ! -f "$SHIM_STATE/services/app-unverified-green" ]
+
+  run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" OPS_DEPLOY_ALLOW_UNVERIFIED=1 "$OPS" deploy unverified 1.0.1
+  [ "$status" -eq 0 ]
+  grep -q 'app-unverified-green:8080' "$TEST_ROOT/dynamic/unverified.yml"
+}
+
+@test "deploy restores the route when the public version does not match the candidate" {
+  bootstrap
+  echo 1.0.1 >"$SHIM_STATE/public-stale-for-version"
+  echo 0.9.9 >"$SHIM_STATE/public-stale-version"
+
+  run "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"verificação pública reprovada"* ]]
+  grep -q 'app-test-app-blue:8080' "$TEST_ROOT/dynamic/test-app.yml"
+  grep -q '"version":"1.0.1".*"action":"deploy".*"result":"failed"' "$SHIM_STATE/releases.jsonl"
+}
+
+@test "ledger repairs an incomplete final record before appending a new one" {
+  bootstrap
+  printf '{"ts":"broken"' >>"$SHIM_STATE/releases.jsonl"
+
+  run "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 0 ]
+  ! grep -q 'broken' "$SHIM_STATE/releases.jsonl"
+  grep -q '"version":"1.0.1".*"action":"deploy".*"result":"success"' "$SHIM_STATE/releases.jsonl"
+}
+
+@test "failed rollback blocks the next deploy and preserves the serving slot" {
+  bootstrap
+  run "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 0 ]
+  echo 1.0.0 >"$SHIM_STATE/public-fail-version"
+
+  run "$OPS" rollback test-app
+  [ "$status" -eq 1 ]
+  [ -f "$SHIM_STATE/services/app-test-app-blue" ]
+
+  run "$OPS" doctor test-app --json
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'"state":"ledger-drift"'* ]]
+
+  route_before="$(cat "$TEST_ROOT/dynamic/test-app.yml")"
+  : >"$SHIM_LOG"
+  run "$OPS" deploy test-app 2.0.0
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"divergência"* ]]
+  [ -f "$SHIM_STATE/services/app-test-app-blue" ]
+  [ "$(cat "$TEST_ROOT/dynamic/test-app.yml")" = "$route_before" ]
+  ! grep -q 'test-app:2.0.0' "$SHIM_LOG"
+}
+
+@test "reconcile --accept-route unblocks deploys after a failed rollback" {
+  bootstrap
+  run "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 0 ]
+  echo 1.0.0 >"$SHIM_STATE/public-fail-version"
+  run "$OPS" rollback test-app
+  [ "$status" -eq 1 ]
+
+  run "$OPS" reconcile test-app --accept-route
+  [ "$status" -eq 0 ]
+  grep -q '"version":"1.0.0".*"slot":"blue".*"action":"reconcile".*"result":"success"' "$SHIM_STATE/releases.jsonl"
+
+  rm -f "$SHIM_STATE/public-fail-version"
+  run "$OPS" deploy test-app 2.0.0
+  [ "$status" -eq 0 ]
+  grep -q 'app-test-app-green:8080' "$TEST_ROOT/dynamic/test-app.yml"
+  grep -q '"version":"2.0.0".*"slot":"green".*"action":"deploy".*"result":"success"' "$SHIM_STATE/releases.jsonl"
+}
+
+@test "recover rejects invalid resource settings before touching the active service" {
+  for setting in APP_LOG_MAX_SIZE=lots APP_MEMORY_LIMIT=abc APP_CPU_LIMIT=fast APP_STOP_GRACE_PERIOD=soon; do
+    field="${setting%%=*}"
+    app="bad-$(printf '%s' "$field" | tr '[:upper:]_' '[:lower:]-')"
+    mkdir -p "$TEST_ROOT/apps/$app"
+    sed -e "s/^APP_NAME=.*/APP_NAME=$app/" \
+      -e "s/^APP_DOMAIN=.*/APP_DOMAIN=$app.internal.example.com/" \
+      "$BATS_TEST_DIRNAME/fixtures/apps/test-app/app.conf" >"$TEST_ROOT/apps/$app/app.conf"
+
+    run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" bootstrap "$app" 1.0.0
+    [ "$status" -eq 0 ]
+    echo "$setting" >>"$TEST_ROOT/apps/$app/app.conf"
+    route_before="$(cat "$TEST_ROOT/dynamic/$app.yml")"
+    ledger_before="$(cat "$SHIM_STATE/releases.jsonl")"
+
+    run env OPS_DEPLOY_APPS_DIR="$TEST_ROOT/apps" "$OPS" recover "$app"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$field"* ]]
+    [ -f "$SHIM_STATE/services/app-$app-blue" ]
+    [ "$(cat "$TEST_ROOT/dynamic/$app.yml")" = "$route_before" ]
+    [ "$(cat "$SHIM_STATE/releases.jsonl")" = "$ledger_before" ]
+  done
+}
+
+
+@test "recover requires --from-ledger when the route is missing" {
+  bootstrap
+  rm -f "$TEST_ROOT/dynamic/test-app.yml" "$SHIM_STATE/services/app-test-app-blue" "$SHIM_STATE/services/app-test-app-blue.replicas"
+
+  run "$OPS" recover test-app
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--from-ledger"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-blue" ]
+
+  run "$OPS" recover test-app --from-ledger
+  [ "$status" -eq 0 ]
+  [ -f "$SHIM_STATE/services/app-test-app-blue" ]
+  [ -f "$TEST_ROOT/dynamic/test-app.yml" ]
+}
+
+@test "doctor detects route and ledger digest divergence" {
+  bootstrap
+  digest="sha256:$(printf 'b%.0s' {1..64})"
+  sed -i "s/digest=sha256:[0-9a-f]*/digest=$digest/" "$TEST_ROOT/dynamic/test-app.yml"
+
+  run "$OPS" doctor test-app --json
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'"state":"ledger-drift"'* ]]
+  [[ "$output" == *'"consistent":false'* ]]
+  [[ "$output" == *'"ledger":{"version":"1.0.0","slot":"blue","digest":"'"$TEST_DIGEST"'"'* ]]
+}
+
+@test "recover validates Docker network and secrets before removing the service" {
+  bootstrap
+  route_before="$(cat "$TEST_ROOT/dynamic/test-app.yml")"
+  ledger_before="$(cat "$SHIM_STATE/releases.jsonl")"
+
+  run env SHIM_DOCKER_MISSING_NETWORK=public "$OPS" recover test-app
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"rede Docker"* ]]
+  [ -f "$SHIM_STATE/services/app-test-app-blue" ]
+
+  run env SHIM_DOCKER_MISSING_SECRETS=test_app_token "$OPS" recover test-app
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"segredo Docker"* ]]
+  [ -f "$SHIM_STATE/services/app-test-app-blue" ]
+  [ "$(cat "$TEST_ROOT/dynamic/test-app.yml")" = "$route_before" ]
+  [ "$(cat "$SHIM_STATE/releases.jsonl")" = "$ledger_before" ]
 }

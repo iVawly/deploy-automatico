@@ -133,9 +133,15 @@ if bash "$DEMO_ROOT/scripts/ops" status demo-app --json 2>/dev/null | grep -q '"
 else
   log "release estável já registrada; verificando a versão ativa"
   if ! bash "$DEMO_ROOT/scripts/ops" verify demo-app --quiet; then
-    log "serviço ativo ausente ou não saudável; recriando a partir do ledger"
-    bash "$DEMO_ROOT/scripts/ops" recover demo-app ||
-      die "não foi possível recuperar a versão ativa; consulte 'ops status demo-app'"
+    log "serviço ativo ausente ou não saudável; recriando o slot desejado"
+    if ! bash "$DEMO_ROOT/scripts/ops" recover demo-app; then
+      if [[ -f "$DEMO_ROOT/dynamic/demo-app.yml" ]]; then
+        die "não foi possível recuperar a versão desejada; consulte 'ops status demo-app'"
+      fi
+      log "rota ausente; recuperando a última release estável do ledger"
+      bash "$DEMO_ROOT/scripts/ops" recover demo-app --from-ledger ||
+        die "não foi possível recuperar a versão ativa; consulte 'ops status demo-app'"
+    fi
   fi
 fi
 

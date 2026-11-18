@@ -3,7 +3,7 @@
 # Requires: bash 4+, curl, docker (except in probe mode "local").
 set -Eeuo pipefail
 
-CLI_VERSION="1.2.0"
+CLI_VERSION="1.3.0"
 
 SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SOURCE" ]]; do
@@ -33,6 +33,7 @@ INSECURE_TLS="${OPS_DEPLOY_INSECURE_TLS:-0}"
 PROXY_HOST="${OPS_DEPLOY_PROXY_HOST:-platform_traefik}"
 IMAGE_DIGEST="${OPS_DEPLOY_IMAGE_DIGEST:-}"
 ALLOW_MUTABLE_TAG="${OPS_DEPLOY_ALLOW_MUTABLE_TAG:-0}"
+ALLOW_UNVERIFIED="${OPS_DEPLOY_ALLOW_UNVERIFIED:-0}"
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 info() { log "INFO  $*"; }
@@ -53,6 +54,40 @@ validate_flag() {
   [[ "$2" == "0" || "$2" == "1" ]] || die "$1 deve ser 0 ou 1 (recebido: '$2')"
 }
 
+validate_size() {
+  local name="$1" value="$2" allow_zero="${3:-0}" re='^[0-9]+(\.[0-9]+)?[[:space:]]?[kKmMgGtTpP]?[iI]?[bB]?$'
+  [[ "$value" =~ $re ]] \
+    || die "$name inválido: $value (use bytes ou sufixo k/m/g/t/p, ex.: 256M)"
+  if [[ "$allow_zero" != "1" ]]; then
+    [[ "$value" =~ [1-9] ]] || die "$name inválido: $value (deve ser maior que zero)"
+  fi
+}
+
+validate_cpu() {
+  local re='^([0-9]+(\.[0-9]+)?|\.[0-9]+)$'
+  [[ "$2" =~ $re ]] || die "$1 inválido: $2 (use decimal >= 0, ex.: 0.50)"
+}
+
+validate_duration() {
+  local re='^0$|^([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+$'
+  [[ "$2" =~ $re ]] || die "$1 inválido: $2 (use duração, ex.: 30s ou 1m30s)"
+}
+
+validate_optional_name() {
+  [[ -z "$2" || "$2" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+    || die "$1 inválido: $2"
+}
+
+validate_mount_path() {
+  [[ -z "$2" || "$2" =~ ^/[^,]*$ ]] \
+    || die "$1 inválido: $2 (use caminho absoluto sem vírgula)"
+}
+
+validate_cap_drop() {
+  [[ -z "$2" || "$2" == "ALL" || "$2" =~ ^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$ ]] \
+    || die "$1 inválido: $2 (use ALL ou lista separada por vírgula)"
+}
+
 validate_secret_names() {
   local -a names=()
   local name
@@ -69,6 +104,7 @@ validate_uint OPS_DEPLOY_PUBLIC_INTERVAL "$PUBLIC_INTERVAL"
 validate_uint OPS_DEPLOY_DRAIN_SECONDS "$DRAIN_SECONDS"
 validate_positive_uint OPS_DEPLOY_RETRY_MAX "$RETRY_MAX"
 validate_uint OPS_DEPLOY_RETRY_DELAY "$RETRY_DELAY"
+validate_flag OPS_DEPLOY_ALLOW_UNVERIFIED "$ALLOW_UNVERIFIED"
 
 usage() {
   cat <<'EOF'
@@ -77,10 +113,13 @@ ops-deploy - blue-green deploy CLI for single-node Docker Swarm
 Usage:
   ops-deploy deploy <app> <version> [--digest sha256:...]
   ops-deploy rollback <app> [version]   Deploy the last stable (or a given) version and switch traffic back
-  ops-deploy verify <app> [--slot S]    Probe the deep health endpoint (5s timeout) and print JSON
+  ops-deploy verify <app> [--slot S] [--quiet]  Probe the deep health endpoint (5s timeout) and print JSON
   ops-deploy status <app> [--json]      Show active release, recent history and service state
   ops-deploy bootstrap <app> <version> [--digest sha256:...]
-  ops-deploy recover <app>              Recreate the active slot from the release ledger
+  ops-deploy recover <app> [--from-ledger]  Recreate the desired slot (or ledger slot with --from-ledger)
+  ops-deploy doctor <app> [--json]      Read-only: desired vs ledger vs runtime vs observed
+  ops-deploy reconcile <app> --accept-route | --accept-ledger
+                                        Explicitly reconcile desired route with the ledger (audited)
   ops-deploy help                       Show this help
   ops-deploy version                    Show CLI version
 
@@ -95,15 +134,23 @@ Environment:
   OPS_DEPLOY_DRAIN_SECONDS  Seconds to keep the previous slot running (default: 10)
   OPS_DEPLOY_ACTOR          Recorded in the ledger (default: GITHUB_ACTOR or id -un)
   OPS_DEPLOY_COMMIT         Recorded in the ledger (default: GITHUB_SHA)
-  OPS_DEPLOY_CERT_RESOLVER  Traefik certificate resolver; empty uses the default certificate
-  OPS_DEPLOY_INSECURE_TLS   1 to skip TLS verification in the public probe (local demo)
+  OPS_DEPLOY_CERT_RESOLVER  Traefik resolver (default: letsencrypt; empty uses default cert)
+  OPS_DEPLOY_INSECURE_TLS   1 to skip TLS verification in the public probe (default: 0)
   OPS_DEPLOY_PROXY_HOST     Swarm service DNS name of the edge proxy (default: platform_traefik)
+  OPS_DEPLOY_PUBLIC_RETRIES Attempts for the public probe (default: 6)
+  OPS_DEPLOY_PUBLIC_INTERVAL Seconds between public probe attempts (default: 2)
   OPS_DEPLOY_IMAGE_DIGEST   Digest sha256:... used by deploy/bootstrap (or pass --digest)
   OPS_DEPLOY_ALLOW_MUTABLE_TAG 1 allows tag-only deploys (legacy/local demo only)
+  OPS_DEPLOY_ALLOW_UNVERIFIED 1 allows deploy/rollback without a public version probe
   OPS_DEPLOY_RETRY_MAX      Attempts for docker pull/service create (default: 3)
   OPS_DEPLOY_RETRY_DELAY    Seconds between attempts (default: 2)
 
-Exit codes: 0 success, 1 failure, 2 usage.
+Version verification: APP_VERIFY_PUBLIC=1 plus APP_PUBLIC_EXPECT_VERSION=1 is
+required for deploy/rollback; otherwise the outcome is unverified and mutations
+are refused unless OPS_DEPLOY_ALLOW_UNVERIFIED=1. APP_HEALTH_EXPECT_VERSION=1
+adds an internal /health version check but does not replace the public probe.
+
+Exit codes: 0 success, 1 failure/divergence, 2 usage or unverified state.
 EOF
 }
 
@@ -131,10 +178,16 @@ require_docker() {
 acquire_lock() {
   [[ "$DRY_RUN" == "1" ]] && return 0
   mkdir -p "$STATE_DIR"
-  exec {LOCK_FD}>"$LOCK_FILE"
   if command -v flock >/dev/null 2>&1; then
+    exec {LOCK_FD}>"$LOCK_FILE"
     flock -n "$LOCK_FD" || die "outra operação de deploy está em andamento neste host"
+    return 0
   fi
+  LOCK_DIR="$STATE_DIR/.lock.d"
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    die "outra operação de deploy está em andamento neste host (lock $LOCK_DIR)"
+  fi
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 }
 
 load_app() {
@@ -165,6 +218,8 @@ load_app() {
   : "${APP_KEEP_VERSIONS:=5}"
   : "${APP_PROBE_IMAGE:=$PROBE_IMAGE_DEFAULT}"
   : "${APP_VERIFY_PUBLIC:=1}"
+  : "${APP_PUBLIC_EXPECT_VERSION:=0}"
+  : "${APP_HEALTH_EXPECT_VERSION:=0}"
   : "${APP_MEMORY_LIMIT:=256M}"
   : "${APP_CPU_LIMIT:=0.50}"
   : "${APP_PIDS_LIMIT:=128}"
@@ -190,12 +245,37 @@ load_app() {
   validate_positive_uint APP_TMPFS_SIZE "$APP_TMPFS_SIZE"
   validate_positive_uint APP_LOG_MAX_FILE "$APP_LOG_MAX_FILE"
   validate_uint APP_PIDS_LIMIT "$APP_PIDS_LIMIT"
+  validate_size APP_MEMORY_LIMIT "$APP_MEMORY_LIMIT" 1
+  validate_size APP_LOG_MAX_SIZE "$APP_LOG_MAX_SIZE"
+  validate_cpu APP_CPU_LIMIT "$APP_CPU_LIMIT"
+  validate_duration APP_STOP_GRACE_PERIOD "$APP_STOP_GRACE_PERIOD"
+  validate_optional_name APP_NETWORK "$APP_NETWORK"
+  validate_optional_name APP_VOLUME "$APP_VOLUME"
+  validate_mount_path APP_MOUNT_PATH "$APP_MOUNT_PATH"
+  validate_cap_drop APP_CAP_DROP "$APP_CAP_DROP"
   validate_flag APP_READ_ONLY "$APP_READ_ONLY"
   validate_flag APP_VERIFY_PUBLIC "$APP_VERIFY_PUBLIC"
+  validate_flag APP_PUBLIC_EXPECT_VERSION "$APP_PUBLIC_EXPECT_VERSION"
+  validate_flag APP_HEALTH_EXPECT_VERSION "$APP_HEALTH_EXPECT_VERSION"
   validate_flag APP_KEEP_PREVIOUS "$APP_KEEP_PREVIOUS"
   validate_secret_names
 
   APP_CHECKSUM="$(sha256sum "$conf" | cut -d' ' -f1)"
+}
+
+validate_docker_refs() {
+  [[ "$DRY_RUN" == "1" ]] && return 0
+  local secret
+  local -a secrets=()
+  if ! docker network inspect "$APP_NETWORK" >/dev/null 2>&1; then
+    die "rede Docker '$APP_NETWORK' não existe; crie-a antes de alterar o serviço"
+  fi
+  [[ -n "${APP_SECRETS:-}" ]] || return 0
+  read -r -a secrets <<< "$APP_SECRETS"
+  for secret in "${secrets[@]}"; do
+    docker secret inspect "$secret" >/dev/null 2>&1 \
+      || die "segredo Docker '$secret' não existe; crie-o antes de alterar o serviço"
+  done
 }
 
 is_immutable_version() {
@@ -242,14 +322,29 @@ other_slot() {
   if [[ "$1" == "blue" ]]; then printf 'green'; else printf 'blue'; fi
 }
 
+ensure_ledger_tail() {
+  [[ -f "$LEDGER" && -s "$LEDGER" ]] || return 0
+  local last last_line
+  last="$(tail -c 1 "$LEDGER" | od -An -t u1 | tr -d '[:space:]')"
+  [[ "$last" == "10" ]] && return 0
+  last_line="$(tail -n 1 "$LEDGER")"
+  if [[ "$last_line" =~ ^\{.*\}$ ]]; then
+    printf '\n' >> "$LEDGER"
+    return 0
+  fi
+  warn "ledger com registro final incompleto; descartando a última linha"
+  sed -i -e '$d' "$LEDGER"
+}
+
 ledger_append() {
-  local app="$1" version="$2" slot="$3" action="$4" result="$5" message="${6:-}" digest="${7:-}"
+  local app="$1" version="$2" slot="$3" action="$4" result="$5" message="${6:-}" digest="${7:-}" line
   if [[ "$DRY_RUN" == "1" ]]; then
     info "DRY-RUN: registraria $action/$result para $app $version (slot $slot)${message:+: $message}"
     return 0
   fi
-  mkdir -p "$STATE_DIR"
-  printf '{"ts":"%s","app":"%s","version":"%s","commit":"%s","slot":"%s","action":"%s","result":"%s","author":"%s","checksum":"%s","digest":"%s","message":"%s"}\n' \
+  mkdir -p "$STATE_DIR" 2>/dev/null || { err "não foi possível criar $STATE_DIR"; return 1; }
+  ensure_ledger_tail
+  printf -v line '{"ts":"%s","app":"%s","version":"%s","commit":"%s","slot":"%s","action":"%s","result":"%s","author":"%s","checksum":"%s","digest":"%s","message":"%s"}' \
     "$(now_utc)" \
     "$(json_escape "$app")" \
     "$(json_escape "$version")" \
@@ -260,18 +355,23 @@ ledger_append() {
     "$(json_escape "$ACTOR")" \
     "$(json_escape "${APP_CHECKSUM:-unknown}")" \
     "$(json_escape "$digest")" \
-    "$(json_escape "$message")" \
-    >> "$LEDGER"
+    "$(json_escape "$message")"
+  printf '%s\n' "$line" >> "$LEDGER" 2>/dev/null \
+    || { err "não foi possível gravar $LEDGER"; return 1; }
 }
 
 json_field() {
   printf '%s' "$1" | sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p"
 }
 
+json_field_ws() {
+  printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"
+}
+
 ledger_for_app() {
   local app="$1"
   [[ -f "$LEDGER" ]] || return 1
-  grep -F "\"app\":\"$app\"" "$LEDGER" || true
+  grep -F "\"app\":\"$app\"" "$LEDGER" | grep -E '^\{.*\}$' || true
 }
 
 last_success_line() {
@@ -281,13 +381,75 @@ last_success_line() {
   printf '%s' "$line"
 }
 
-active_state() {
+route_file() {
+  printf '%s/%s.yml' "$DYNAMIC_DIR" "$APP_NAME"
+}
+
+ledger_active_state() {
   local app="$1" line
   line="$(last_success_line "$app")" || return 1
   ACTIVE_VERSION="$(json_field "$line" version)"
   ACTIVE_SLOT="$(json_field "$line" slot)"
   ACTIVE_DIGEST="$(json_field "$line" digest)"
   [[ -n "$ACTIVE_VERSION" && -n "$ACTIVE_SLOT" ]]
+}
+
+# Reads the generated route header. This is the desired/configured state, not
+# proof that Traefik already applied it or that the expected version is serving.
+desired_state() {
+  local file line part
+  local -a parts=()
+  file="$(route_file)"
+  [[ -f "$file" ]] || return 1
+  line="$(grep -m1 -E '^# (ops-deploy route: )?app=' "$file" || true)"
+  [[ -n "$line" ]] || return 1
+  line="${line#\# }"
+  line="${line#ops-deploy route: }"
+  read -r -a parts <<< "$line"
+  DESIRED_APP=""
+  DESIRED_VERSION=""
+  DESIRED_SLOT=""
+  DESIRED_DIGEST=""
+  for part in "${parts[@]}"; do
+    case "$part" in
+      app=*) DESIRED_APP="${part#app=}" ;;
+      version=*) DESIRED_VERSION="${part#version=}" ;;
+      slot=*) DESIRED_SLOT="${part#slot=}" ;;
+      digest=*) DESIRED_DIGEST="${part#digest=}" ;;
+    esac
+  done
+  [[ "$DESIRED_APP" == "$APP_NAME" ]] || return 1
+  is_immutable_version "$DESIRED_VERSION" || return 1
+  [[ "$DESIRED_SLOT" == "blue" || "$DESIRED_SLOT" == "green" ]] || return 1
+  [[ -z "$DESIRED_DIGEST" ]] || is_digest "$DESIRED_DIGEST" || return 1
+  return 0
+}
+
+require_consistent_state() {
+  if ! desired_state; then
+    if ! ledger_active_state "$APP_NAME"; then
+      die "nenhuma release estável registrada para $APP_NAME; execute 'ops-deploy bootstrap $APP_NAME <versão>'"
+    fi
+    die "estado desejado ausente ou ilegível em $(route_file); rode 'ops-deploy doctor $APP_NAME' e reconcilie"
+  fi
+  ledger_active_state "$APP_NAME" || die "rota existe, mas o ledger não tem release estável; rode 'ops-deploy doctor $APP_NAME' e 'ops-deploy reconcile $APP_NAME --accept-route'"
+  if [[ "$DESIRED_VERSION" != "$ACTIVE_VERSION" || "$DESIRED_SLOT" != "$ACTIVE_SLOT" ]]; then
+    die "divergência: rota=$DESIRED_VERSION/$DESIRED_SLOT ledger=$ACTIVE_VERSION/$ACTIVE_SLOT; rode 'ops-deploy doctor $APP_NAME' e 'ops-deploy reconcile $APP_NAME --accept-route|--accept-ledger'"
+  fi
+  if [[ -n "$DESIRED_DIGEST" && -n "$ACTIVE_DIGEST" && "$DESIRED_DIGEST" != "$ACTIVE_DIGEST" ]]; then
+    die "divergência de digest: rota=$DESIRED_DIGEST ledger=$ACTIVE_DIGEST; rode 'ops-deploy doctor $APP_NAME'"
+  fi
+}
+
+require_public_proof() {
+  if [[ "$APP_VERIFY_PUBLIC" == "1" && "$APP_PUBLIC_EXPECT_VERSION" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$ALLOW_UNVERIFIED" == "1" ]]; then
+    warn "sem confirmação de versão servida; prosseguindo por OPS_DEPLOY_ALLOW_UNVERIFIED=1"
+    return 0
+  fi
+  die "sem confirmação de versão servida (exige APP_VERIFY_PUBLIC=1 e APP_PUBLIC_EXPECT_VERSION=1); defina OPS_DEPLOY_ALLOW_UNVERIFIED=1 para aceitar explicitamente"
 }
 
 version_digest() {
@@ -418,21 +580,26 @@ request() {
 }
 
 probe_health() {
-  local slot="$1" url
+  local slot="$1" expected="${2:-}" url
   url="http://$(service_name "$slot"):$APP_PORT$APP_HEALTH_PATH"
   split_response "$(request "$url")"
   [[ "$HEALTH_CODE" == "200" ]] || return 1
-  printf '%s' "$HEALTH_BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"'
+  printf '%s' "$HEALTH_BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"' || return 1
+  if [[ "${APP_HEALTH_EXPECT_VERSION:-0}" == "1" ]]; then
+    [[ -n "$expected" ]] || return 1
+    [[ "$(json_field_ws "$HEALTH_BODY" version)" == "$expected" ]] || return 1
+  fi
+  return 0
 }
 
 wait_healthy() {
-  local slot="$1" attempt
+  local slot="$1" expected="${2:-}" attempt
   if [[ "$DRY_RUN" == "1" ]]; then
     info "DRY-RUN: ignorando health check de $APP_NAME/$slot (nenhum serviço foi criado)"
     return 0
   fi
   for ((attempt = 1; attempt <= APP_HEALTH_RETRIES; attempt++)); do
-    if probe_health "$slot"; then
+    if probe_health "$slot" "$expected"; then
       return 0
     fi
     info "saúde de $APP_NAME/$slot ainda não confirmada (tentativa $attempt/$APP_HEALTH_RETRIES, HTTP ${HEALTH_CODE:-sem resposta})"
@@ -442,24 +609,29 @@ wait_healthy() {
 }
 
 probe_public() {
-  local out
+  local expected="${1:-}" out
   if [[ "$PROBE_MODE" == "local" ]]; then
     out="$(request "http://$APP_DOMAIN$APP_PUBLIC_CHECK_PATH")"
   else
     out="$(request "https://$APP_DOMAIN$APP_PUBLIC_CHECK_PATH" "$APP_DOMAIN")"
   fi
   split_response "$out"
-  [[ "$HEALTH_CODE" =~ ^[23][0-9][0-9]$ ]]
+  [[ "$HEALTH_CODE" =~ ^[23][0-9][0-9]$ ]] || return 1
+  if [[ "${APP_PUBLIC_EXPECT_VERSION:-0}" == "1" ]]; then
+    [[ -n "$expected" ]] || return 1
+    [[ "$(json_field_ws "$HEALTH_BODY" version)" == "$expected" ]] || return 1
+  fi
+  return 0
 }
 
 wait_public() {
-  local attempt
+  local expected="${1:-}" attempt
   if [[ "$DRY_RUN" == "1" ]]; then
     info "DRY-RUN: ignorando verificação pública de $APP_NAME (nenhuma rota foi aplicada)"
     return 0
   fi
   for ((attempt = 1; attempt <= PUBLIC_RETRIES; attempt++)); do
-    probe_public && return 0
+    probe_public "$expected" && return 0
     sleep "$PUBLIC_INTERVAL"
   done
   return 1
@@ -555,7 +727,7 @@ deploy_slot() {
 }
 
 write_route() {
-  local slot="$1" version="$2" file tmp tls
+  local slot="$1" version="$2" digest="${3:-}" file tmp tls
   if [[ "$DRY_RUN" == "1" ]]; then
     info "DRY-RUN: escreveria a rota $APP_NAME -> http://$(service_name "$slot"):$APP_PORT"
     return 0
@@ -571,7 +743,7 @@ write_route() {
   fi
   cat > "$tmp" <<EOF
 # generated by ops-deploy - do not edit manually
-# app=$APP_NAME version=$version slot=$slot
+# ops-deploy route: app=$APP_NAME version=$version slot=$slot digest=$digest
 http:
   routers:
     $APP_NAME:
@@ -603,10 +775,13 @@ backup_route() {
 }
 
 restore_route() {
-  local file="$DYNAMIC_DIR/$APP_NAME.yml"
+  local file tmp
+  file="$(route_file)"
   [[ "$DRY_RUN" == "1" ]] && return 0
   if [[ -n "${ROUTE_BACKUP:-}" && -f "$ROUTE_BACKUP" ]]; then
-    cp "$ROUTE_BACKUP" "$file"
+    tmp="$(mktemp "$DYNAMIC_DIR/.$APP_NAME.restore.XXXXXX")"
+    cp "$ROUTE_BACKUP" "$tmp"
+    mv "$tmp" "$file"
     rm -f "$ROUTE_BACKUP"
     ROUTE_BACKUP=""
   else
@@ -641,10 +816,14 @@ cmd_bootstrap() {
   require_version "$version"
   require_digest "$digest"
   require_docker
+  validate_docker_refs
   acquire_lock
 
   if last_success_line "$app" >/dev/null 2>&1; then
     die "já existe release estável para $app; use 'ops-deploy deploy $app $version'"
+  fi
+  if desired_state; then
+    die "já existe rota para $app ($DESIRED_VERSION/$DESIRED_SLOT); rode 'ops-deploy doctor $app' e reconcilie"
   fi
 
   local image
@@ -659,7 +838,7 @@ cmd_bootstrap() {
     die "falha ao criar o serviço blue"
   fi
 
-  if ! wait_healthy blue; then
+  if ! wait_healthy blue "$version"; then
     scale_service "$(service_name blue)" 0 || true
     restore_route
     ledger_append "$app" "$version" blue bootstrap failed "health check reprovado" "$digest"
@@ -667,33 +846,58 @@ cmd_bootstrap() {
   fi
 
   backup_route
-  write_route blue "$version"
+  write_route blue "$version" "$digest"
 
-  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public; then
+  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public "$version"; then
     restore_route
     scale_service "$(service_name blue)" 0 || true
     ledger_append "$app" "$version" blue bootstrap failed "verificação pública reprovada" "$digest"
     die "bootstrap abortado: verificação pública reprovada"
   fi
 
-  ledger_append "$app" "$version" blue bootstrap success "bootstrap concluído" "$digest"
+  if ! ledger_append "$app" "$version" blue bootstrap success "bootstrap concluído" "$digest"; then
+    send_alert "Bootstrap de $app aplicado sem registro no ledger" \
+      "Rota blue/$version está ativa, mas o ledger não foi gravado. Rode 'ops-deploy reconcile $app --accept-route'."
+    die "bootstrap aplicado, mas não foi possível registrar no ledger; reconcilie com 'ops-deploy reconcile $app --accept-route'"
+  fi
   info "bootstrap concluído: $app $version ativo no slot blue"
 }
 
 cmd_recover() {
-  local app="${1:-}"
+  local app="${1:-}" from_ledger=0
   [[ -n "$app" ]] || { usage; exit 2; }
-  [[ $# -eq 1 ]] || die "argumento inválido para recover: $2"
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from-ledger) from_ledger=1; shift ;;
+      *) die "argumento inválido para recover: $1" ;;
+    esac
+  done
   load_app "$app"
   require_docker
+  validate_docker_refs
   acquire_lock
-  active_state "$app" || die "nenhuma release estável registrada para $app"
 
-  local slot="$ACTIVE_SLOT" version="$ACTIVE_VERSION" digest="$ACTIVE_DIGEST" image
-  if [[ -z "$digest" ]]; then
-    warn "ledger sem digest para $app $version; recuperando por tag (registro legado)"
+  local slot version digest image
+  if [[ "$from_ledger" == "1" ]]; then
+    ledger_active_state "$app" || die "nenhuma release estável registrada para $app"
+    slot="$ACTIVE_SLOT"; version="$ACTIVE_VERSION"; digest="$ACTIVE_DIGEST"
+  elif desired_state; then
+    slot="$DESIRED_SLOT"; version="$DESIRED_VERSION"; digest="$DESIRED_DIGEST"
+    if ledger_active_state "$app"; then
+      if [[ "$ACTIVE_VERSION" != "$version" || "$ACTIVE_SLOT" != "$slot" ]]; then
+        warn "divergência rota=$version/$slot ledger=$ACTIVE_VERSION/$ACTIVE_SLOT; recuperando o estado desejado (use --from-ledger para o ledger)"
+      fi
+      [[ -n "$digest" ]] || digest="$ACTIVE_DIGEST"
+    fi
   else
-    is_digest "$digest" || die "digest inválido no ledger para $app $version: $digest"
+    die "rota ausente para $app; use 'ops-deploy recover $app --from-ledger' para recuperar a partir do ledger"
+  fi
+
+  if [[ -z "$digest" ]]; then
+    warn "registro sem digest para $app $version; recuperando por tag (registro legado)"
+  else
+    is_digest "$digest" || die "digest inválido para $app $version: $digest"
   fi
   image="$(image_ref "$version" "$digest")"
   info "recuperando $app $version no slot $slot"
@@ -708,20 +912,24 @@ cmd_recover() {
     die "falha ao recriar o serviço $slot"
   fi
 
-  if ! wait_healthy "$slot"; then
+  if ! wait_healthy "$slot" "$version"; then
     scale_service "$(service_name "$slot")" 0 || true
     ledger_append "$app" "$version" "$slot" recover failed "health check reprovado" "$digest"
     die "recuperação abortada: $app/$slot não ficou saudável"
   fi
 
-  write_route "$slot" "$version"
+  write_route "$slot" "$version" "$digest"
 
-  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public; then
+  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public "$version"; then
     ledger_append "$app" "$version" "$slot" recover failed "verificação pública reprovada" "$digest"
     die "recuperação abortada: verificação pública reprovada"
   fi
 
-  ledger_append "$app" "$version" "$slot" recover success "serviço recriado a partir do ledger" "$digest"
+  if ! ledger_append "$app" "$version" "$slot" recover success "serviço recriado" "$digest"; then
+    send_alert "Recuperação de $app aplicada sem registro no ledger" \
+      "Rota $slot/$version está ativa, mas o ledger não foi gravado. Rode 'ops-deploy reconcile $app --accept-route'."
+    die "recuperação aplicada, mas o ledger não foi gravado; reconcilie com 'ops-deploy reconcile $app --accept-route'"
+  fi
   info "recuperação concluída: $app $version ativo no slot $slot"
 }
 
@@ -741,17 +949,24 @@ cmd_deploy() {
   require_version "$version"
   require_digest "$digest"
   require_docker
+  validate_docker_refs
+  require_public_proof
   acquire_lock
 
-  active_state "$app" || die "nenhuma release estável registrada para $app; execute 'ops-deploy bootstrap $app $version'"
+  require_consistent_state
 
-  local from_slot="$ACTIVE_SLOT" from_version="$ACTIVE_VERSION" to_slot image
+  local from_slot="$DESIRED_SLOT" from_version="$DESIRED_VERSION" to_slot image
   to_slot="$(other_slot "$from_slot")"
   image="$(image_ref "$version" "$digest")"
 
-  info "deploy de $app $version: slot ativo $from_slot ($from_version), candidato $to_slot"
+  info "deploy de $app $version: slot desejado/ativo $from_slot ($from_version), candidato $to_slot"
 
-  if [[ "$DRY_RUN" != "1" ]] && ! probe_health "$from_slot"; then
+  if [[ "$APP_VERIFY_PUBLIC" == "1" && "$DRY_RUN" != "1" ]] && ! probe_public "$from_version"; then
+    ledger_append "$app" "$version" "$to_slot" deploy failed "tráfego público não confirma a versão ativa $from_version" "$digest"
+    die "divergência observada: tráfego público não confirma $from_version em $from_slot; aguarde o Traefik ou rode 'ops-deploy doctor $app'"
+  fi
+
+  if [[ "$DRY_RUN" != "1" ]] && ! probe_health "$from_slot" "$from_version"; then
     ledger_append "$app" "$version" "$to_slot" deploy failed "pré-condição: slot ativo $from_slot não está saudável" "$digest"
     die "pré-condição falhou: slot ativo $from_slot não está saudável; deploy não iniciado"
   fi
@@ -766,23 +981,27 @@ cmd_deploy() {
     die "falha ao preparar o serviço candidato $to_slot; versão ativa preservada"
   fi
 
-  if ! wait_healthy "$to_slot"; then
+  if ! wait_healthy "$to_slot" "$version"; then
     scale_service "$(service_name "$to_slot")" 0 || true
     ledger_append "$app" "$version" "$to_slot" deploy failed "health check reprovado antes da troca de tráfego" "$digest"
     die "versão $version reprovada: tráfego mantido em $from_slot ($from_version)"
   fi
 
   backup_route
-  write_route "$to_slot" "$version"
+  write_route "$to_slot" "$version" "$digest"
 
-  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public; then
+  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public "$version"; then
     restore_route
     scale_service "$(service_name "$to_slot")" 0 || true
     ledger_append "$app" "$version" "$to_slot" deploy failed "verificação pública reprovada após troca de tráfego" "$digest"
     die "verificação pública reprovada: tráfego restaurado para $from_slot ($from_version)"
   fi
 
-  ledger_append "$app" "$version" "$to_slot" deploy success "promovido para $to_slot" "$digest"
+  if ! ledger_append "$app" "$version" "$to_slot" deploy success "promovido para $to_slot" "$digest"; then
+    send_alert "Deploy de $app $version aplicado sem registro no ledger" \
+      "Rota $to_slot/$version está ativa, mas o ledger não foi gravado. Rode 'ops-deploy reconcile $app --accept-route'."
+    die "deploy aplicado, mas não foi possível registrar no ledger; reconcilie com 'ops-deploy reconcile $app --accept-route'"
+  fi
 
   if [[ "$APP_KEEP_PREVIOUS" != "1" && "$DRY_RUN" != "1" ]]; then
     [[ "$DRAIN_SECONDS" == "0" ]] || sleep "$DRAIN_SECONDS"
@@ -798,10 +1017,12 @@ cmd_rollback() {
   [[ $# -le 2 ]] || die "argumento inválido para rollback: $3"
   load_app "$app"
   require_docker
+  validate_docker_refs
+  require_public_proof
   acquire_lock
-  active_state "$app" || die "nenhuma release estável registrada para $app"
+  require_consistent_state
 
-  local current_version="$ACTIVE_VERSION" current_slot="$ACTIVE_SLOT" to_slot
+  local current_version="$DESIRED_VERSION" current_slot="$DESIRED_SLOT" to_slot
   if [[ -z "$target" ]]; then
     target="$(previous_stable_version "$app" "$current_version")" \
       || die "nenhuma versão estável anterior encontrada para rollback"
@@ -823,6 +1044,11 @@ cmd_rollback() {
 
   info "rollback de $app: $current_version ($current_slot) -> $target ($to_slot)"
 
+  if [[ "$APP_VERIFY_PUBLIC" == "1" && "$DRY_RUN" != "1" ]] && ! probe_public "$current_version"; then
+    ledger_append "$app" "$target" "$to_slot" rollback failed "tráfego público não confirma a versão ativa $current_version" "$digest"
+    die "divergência observada: tráfego público não confirma $current_version em $current_slot; aguarde o Traefik ou rode 'ops-deploy doctor $app'"
+  fi
+
   if ! run_cmd_retry docker pull "$image"; then
     ledger_append "$app" "$target" "$to_slot" rollback failed "falha ao baixar imagem" "$digest"
     die "falha ao baixar a imagem $image"
@@ -833,23 +1059,27 @@ cmd_rollback() {
     die "falha ao preparar o rollback; versão ativa $current_version preservada"
   fi
 
-  if ! wait_healthy "$to_slot"; then
+  if ! wait_healthy "$to_slot" "$target"; then
     scale_service "$(service_name "$to_slot")" 0 || true
     ledger_append "$app" "$target" "$to_slot" rollback failed "health check reprovado antes da troca de tráfego" "$digest"
     die "rollback abortado: $target não ficou saudável; versão ativa $current_version preservada"
   fi
 
   backup_route
-  write_route "$to_slot" "$target"
+  write_route "$to_slot" "$target" "$digest"
 
-  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public; then
+  if [[ "$APP_VERIFY_PUBLIC" == "1" ]] && ! wait_public "$target"; then
     ledger_append "$app" "$target" "$to_slot" rollback failed "verificação pública reprovada após rollback" "$digest"
     send_alert "Rollback de $app falhou após troca de tráfego" \
       "Serviço $app restaurado para $target em $to_slot, mas a verificação pública falhou. Consulte runbooks/incidentes.md"
     die "rollback aplicado mas não saudável: $target mantido em $to_slot para diagnóstico"
   fi
 
-  ledger_append "$app" "$target" "$to_slot" rollback success "rollback de $current_version para $target" "$digest"
+  if ! ledger_append "$app" "$target" "$to_slot" rollback success "rollback de $current_version para $target" "$digest"; then
+    send_alert "Rollback de $app aplicado sem registro no ledger" \
+      "Rota $to_slot/$target está ativa, mas o ledger não foi gravado. Rode 'ops-deploy reconcile $app --accept-route'."
+    die "rollback aplicado, mas não foi possível registrar no ledger; reconcilie com 'ops-deploy reconcile $app --accept-route'"
+  fi
 
   if [[ "$APP_KEEP_PREVIOUS" != "1" && "$DRY_RUN" != "1" ]]; then
     [[ "$DRAIN_SECONDS" == "0" ]] || sleep "$DRAIN_SECONDS"
@@ -874,26 +1104,44 @@ cmd_verify() {
   done
   load_app "$app"
 
+  local expected=""
   if [[ -z "$slot" ]]; then
-    active_state "$app" || die "nenhuma release estável registrada para $app"
-    slot="$ACTIVE_SLOT"
+    if desired_state; then
+      slot="$DESIRED_SLOT"
+      expected="$DESIRED_VERSION"
+    elif ledger_active_state "$app"; then
+      slot="$ACTIVE_SLOT"
+      expected="$ACTIVE_VERSION"
+      warn "rota ausente; verificando slot do ledger ($expected/$slot)"
+    else
+      die "nenhuma release estável registrada para $app"
+    fi
   fi
   [[ "$slot" == "blue" || "$slot" == "green" ]] || die "slot inválido: $slot"
 
-  probe_health "$slot" || true
+  if [[ -z "$expected" ]]; then
+    if desired_state && [[ "$DESIRED_SLOT" == "$slot" ]]; then
+      expected="$DESIRED_VERSION"
+    elif ledger_active_state "$app" && [[ "$ACTIVE_SLOT" == "$slot" ]]; then
+      expected="$ACTIVE_VERSION"
+    fi
+  fi
+
+  local healthy=0
+  probe_health "$slot" "$expected" && healthy=1
   [[ -n "${HEALTH_BODY:-}" ]] && body_json="\"$(json_escape "$HEALTH_BODY")\""
   if [[ "$json" == "1" ]]; then
-    printf '{"app":"%s","slot":"%s","healthy":%s,"http_code":"%s","checked_at":"%s","body":%s}\n' \
-      "$(json_escape "$app")" "$(json_escape "$slot")" \
-      "$([[ "$HEALTH_CODE" == "200" ]] && printf 'true' || printf 'false')" \
+    printf '{"app":"%s","slot":"%s","expected_version":"%s","healthy":%s,"http_code":"%s","checked_at":"%s","body":%s}\n' \
+      "$(json_escape "$app")" "$(json_escape "$slot")" "$(json_escape "$expected")" \
+      "$([[ "$healthy" == "1" ]] && printf 'true' || printf 'false')" \
       "$(json_escape "${HEALTH_CODE:-}")" "$(now_utc)" \
       "$body_json"
   else
-    printf '%s/%s healthy=%s http=%s\n' "$app" "$slot" \
-      "$([[ "$HEALTH_CODE" == "200" ]] && printf yes || printf no)" "${HEALTH_CODE:-none}"
+    printf '%s/%s healthy=%s http=%s expected_version=%s\n' "$app" "$slot" \
+      "$([[ "$healthy" == "1" ]] && printf yes || printf no)" "${HEALTH_CODE:-none}" "${expected:-unknown}"
   fi
 
-  [[ "$HEALTH_CODE" == "200" ]] && printf '%s' "$HEALTH_BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"'
+  [[ "$healthy" == "1" ]]
 }
 
 cmd_status() {
@@ -916,6 +1164,25 @@ cmd_status() {
     digest="$(json_field "$line" digest)"
   fi
 
+  local desired_version="" desired_slot="" desired_digest="" consistent=false
+  local version_probe="unverified" last_action="" last_result="" last_line
+  if desired_state; then
+    desired_version="$DESIRED_VERSION"
+    desired_slot="$DESIRED_SLOT"
+    desired_digest="$DESIRED_DIGEST"
+  fi
+  if [[ -n "$version" && "$version" == "$desired_version" && "$slot" == "$desired_slot" ]]; then
+    consistent=true
+  fi
+  if [[ "$APP_VERIFY_PUBLIC" == "1" && "$APP_PUBLIC_EXPECT_VERSION" == "1" ]]; then
+    version_probe="enabled"
+  fi
+  last_line="$(ledger_for_app "$app" | tail -n 1 || true)"
+  if [[ -n "$last_line" ]]; then
+    last_action="$(json_field "$last_line" action)"
+    last_result="$(json_field "$last_line" result)"
+  fi
+
   if [[ "$as_json" == "1" ]]; then
     local versions_json="" sep="" v s t d stable_lines
     stable_lines="$(stable_version_lines "$app")"
@@ -928,9 +1195,10 @@ cmd_status() {
       versions_json+="${sep}{\"version\":\"$(json_escape "$v")\",\"slot\":\"$(json_escape "$s")\",\"digest\":\"$(json_escape "$d")\",\"deployed_at\":\"$(json_escape "$t")\",\"healthy\":true}"
       sep=","
     done <<<"$stable_lines"
-    printf '{"app":"%s","active_version":"%s","active_slot":"%s","active_digest":"%s","since":"%s","retention_limit":%s,"stable_versions":[%s]}\n' \
+    printf '{"app":"%s","active_version":"%s","active_slot":"%s","active_digest":"%s","since":"%s","retention_limit":%s,"desired_version":"%s","desired_slot":"%s","desired_digest":"%s","consistent":%s,"version_probe":"%s","last_action":"%s","last_result":"%s","stable_versions":[%s]}\n' \
       "$(json_escape "$app")" "$(json_escape "$version")" "$(json_escape "$slot")" "$(json_escape "$digest")" "$(json_escape "$ts")" \
-      "$APP_KEEP_VERSIONS" "$versions_json"
+      "$APP_KEEP_VERSIONS" "$(json_escape "$desired_version")" "$(json_escape "$desired_slot")" "$(json_escape "$desired_digest")" \
+      "$consistent" "$version_probe" "$(json_escape "$last_action")" "$(json_escape "$last_result")" "$versions_json"
     return 0
   fi
 
@@ -940,6 +1208,8 @@ cmd_status() {
   else
     printf 'versão ativa: (nenhuma release registrada)\n'
   fi
+  printf 'rota desejada: %s/%s (consistente=%s, versão verificada=%s)\n' \
+    "${desired_version:-ausente}" "${desired_slot:-ausente}" "$consistent" "$version_probe"
 
   printf '\nversões estáveis disponíveis (até %s):\n' "$APP_KEEP_VERSIONS"
   local found=0 stable_lines
@@ -965,10 +1235,166 @@ cmd_status() {
   fi
 
   if command -v docker >/dev/null 2>&1 && [[ "$DRY_RUN" != "1" ]]; then
-    printf '\nservi��os:\n'
+    printf '\nserviços:\n'
     docker service ls \
       --filter "label=opsdeploy_app=$app" \
       --format '  {{.Name}} {{.Replicas}} {{.Image}}' 2>/dev/null | head -n 6 || true
+  fi
+}
+
+cmd_doctor() {
+  local app="${1:-}" as_json=0
+  [[ -n "$app" ]] || { usage; exit 2; }
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      *) die "argumento inválido para doctor: $1" ;;
+    esac
+  done
+  load_app "$app"
+
+  local route_status="ok" desired_version="" desired_slot="" desired_digest=""
+  local ledger_status="ok" ledger_version="" ledger_slot="" ledger_digest=""
+  local consistent=false runtime_status="unknown" replicas="unknown"
+  local observed_status="skipped" observed_version="" version_probe="unverified"
+  local state="ok" exit_code=0 slot svc
+
+  if desired_state; then
+    desired_version="$DESIRED_VERSION"
+    desired_slot="$DESIRED_SLOT"
+    desired_digest="$DESIRED_DIGEST"
+  elif [[ -f "$(route_file)" ]]; then
+    route_status="route-invalid"
+  else
+    route_status="route-missing"
+  fi
+
+  if ledger_active_state "$app"; then
+    ledger_version="$ACTIVE_VERSION"
+    ledger_slot="$ACTIVE_SLOT"
+    ledger_digest="$ACTIVE_DIGEST"
+  else
+    ledger_status="ledger-missing"
+  fi
+
+  if [[ "$route_status" == "ok" && "$ledger_status" == "ok" ]]; then
+    if [[ "$desired_version" != "$ledger_version" || "$desired_slot" != "$ledger_slot" ]]; then
+      ledger_status="divergent"
+    elif [[ -n "$desired_digest" && -n "$ledger_digest" && "$desired_digest" != "$ledger_digest" ]]; then
+      ledger_status="digest-divergent"
+    else
+      consistent=true
+    fi
+  fi
+
+  if [[ "$APP_VERIFY_PUBLIC" == "1" && "$APP_PUBLIC_EXPECT_VERSION" == "1" ]]; then
+    version_probe="enabled"
+  fi
+
+  slot="${desired_slot:-$ledger_slot}"
+  if [[ "$DRY_RUN" != "1" && -n "$slot" ]] && command -v docker >/dev/null 2>&1; then
+    svc="$(service_name "$slot")"
+    if docker service inspect "$svc" >/dev/null 2>&1; then
+      replicas="$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "$svc" 2>/dev/null || true)"
+      [[ -n "$replicas" ]] || replicas="unknown"
+      if [[ "$replicas" == "0" ]]; then
+        runtime_status="scaled-down"
+      else
+        runtime_status="present"
+      fi
+    else
+      runtime_status="missing"
+    fi
+  fi
+
+  if [[ "$version_probe" == "enabled" && -n "$desired_version" ]]; then
+    if probe_public "$desired_version"; then
+      observed_status="ok"
+      observed_version="$(json_field_ws "$HEALTH_BODY" version)"
+    else
+      observed_status="mismatch"
+      observed_version="$(json_field_ws "$HEALTH_BODY" version)"
+    fi
+  fi
+
+  if [[ "$route_status" != "ok" ]]; then
+    state="$route_status"; exit_code=2
+  elif [[ "$ledger_status" != "ok" ]]; then
+    state="ledger-drift"; exit_code=2
+  elif [[ "$version_probe" != "enabled" ]]; then
+    state="unverified"; exit_code=2
+  elif [[ "$runtime_status" == "unknown" ]]; then
+    state="runtime-unknown"; exit_code=2
+  elif [[ "$runtime_status" != "present" ]]; then
+    state="runtime-mismatch"; exit_code=1
+  elif [[ "$observed_status" != "ok" ]]; then
+    state="apply-pending"; exit_code=1
+  fi
+
+  if [[ "$as_json" == "1" ]]; then
+    printf '{"app":"%s","state":"%s","exit_code":%s,"consistent":%s,"version_probe":"%s","desired":{"version":"%s","slot":"%s","digest":"%s","status":"%s"},"ledger":{"version":"%s","slot":"%s","digest":"%s","status":"%s"},"runtime":{"status":"%s","replicas":"%s"},"observed":{"status":"%s","version":"%s"},"checked_at":"%s"}\n' \
+      "$(json_escape "$app")" "$state" "$exit_code" "$consistent" "$version_probe" \
+      "$(json_escape "$desired_version")" "$(json_escape "$desired_slot")" "$(json_escape "$desired_digest")" "$route_status" \
+      "$(json_escape "$ledger_version")" "$(json_escape "$ledger_slot")" "$(json_escape "$ledger_digest")" "$ledger_status" \
+      "$runtime_status" "$(json_escape "$replicas")" \
+      "$observed_status" "$(json_escape "$observed_version")" "$(now_utc)"
+  else
+    printf 'app: %s\nestado: %s (exit %s)\n' "$app" "$state" "$exit_code"
+    printf 'desejado: %s/%s digest=%s [%s]\n' "${desired_version:-ausente}" "${desired_slot:-ausente}" "${desired_digest:-nenhum}" "$route_status"
+    printf 'ledger:   %s/%s digest=%s [%s]\n' "${ledger_version:-ausente}" "${ledger_slot:-ausente}" "${ledger_digest:-nenhum}" "$ledger_status"
+    printf 'runtime:  %s (réplicas=%s)\n' "$runtime_status" "$replicas"
+    printf 'observado: %s versão=%s (probe=%s)\n' "$observed_status" "${observed_version:-desconhecida}" "$version_probe"
+    if [[ "$state" != "ok" ]]; then
+      printf '\nAções sugeridas:\n'
+      case "$state" in
+        route-missing | route-invalid | ledger-drift)
+          printf '  ops-deploy reconcile %s --accept-ledger   # usar o ledger\n' "$app"
+          printf '  ops-deploy reconcile %s --accept-route    # usar a rota (se ela for a verdade)\n' "$app" ;;
+        runtime-mismatch)
+          printf '  ops-deploy recover %s\n' "$app" ;;
+        apply-pending)
+          printf '  aguarde o Traefik aplicar a rota (file provider) e rode doctor novamente\n' ;;
+        unverified)
+          printf '  configure APP_PUBLIC_EXPECT_VERSION=1 ou OPS_DEPLOY_ALLOW_UNVERIFIED=1 (auditado)\n' ;;
+      esac
+    fi
+  fi
+  return "$exit_code"
+}
+
+cmd_reconcile() {
+  local app="${1:-}" mode=""
+  [[ -n "$app" ]] || { usage; exit 2; }
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --accept-route) mode="accept-route"; shift ;;
+      --accept-ledger) mode="accept-ledger"; shift ;;
+      *) die "argumento inválido para reconcile: $1" ;;
+    esac
+  done
+  [[ -n "$mode" ]] || die "reconcile exige --accept-route ou --accept-ledger"
+  load_app "$app"
+  acquire_lock
+
+  local slot version digest
+  if [[ "$mode" == "accept-route" ]]; then
+    desired_state || die "rota ausente ou inválida em $(route_file); nada para aceitar"
+    slot="$DESIRED_SLOT"; version="$DESIRED_VERSION"; digest="$DESIRED_DIGEST"
+    ledger_append "$app" "$version" "$slot" reconcile success "rota aceita como estado desejado (auditado)" "$digest" \
+      || die "não foi possível gravar a reconciliação no ledger"
+    write_route "$slot" "$version" "$digest" \
+      || warn "ledger reconciliado, mas a rota não pôde ser normalizada"
+    info "reconciliação concluída: ledger passou a aceitar $version/$slot a partir da rota"
+  else
+    ledger_active_state "$app" || die "ledger sem release estável; nada para aceitar"
+    slot="$ACTIVE_SLOT"; version="$ACTIVE_VERSION"; digest="$ACTIVE_DIGEST"
+    write_route "$slot" "$version" "$digest" \
+      || die "não foi possível reescrever a rota a partir do ledger"
+    ledger_append "$app" "$version" "$slot" reconcile success "rota reescrita a partir do ledger (auditado)" "$digest" \
+      || warn "rota reconciliada, mas o registro de auditoria não pôde ser gravado"
+    info "reconciliação concluída: rota passou a apontar para $version/$slot a partir do ledger"
   fi
 }
 
@@ -981,6 +1407,8 @@ main() {
     status) shift; cmd_status "$@" ;;
     bootstrap) shift; cmd_bootstrap "$@" ;;
     recover) shift; cmd_recover "$@" ;;
+    doctor) shift; cmd_doctor "$@" ;;
+    reconcile) shift; cmd_reconcile "$@" ;;
     help | --help | -h) usage ;;
     version | --version) printf 'ops-deploy %s\n' "$CLI_VERSION" ;;
     *) err "comando desconhecido: $command"; usage; exit 2 ;;

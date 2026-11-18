@@ -77,6 +77,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Guard local demo state
+        run: |
+          tracked="$(git ls-files 'local-demo/state')"
+          if [ -n "$tracked" ]; then
+            echo "local-demo/state must never be tracked (contains generated credentials):" >&2
+            printf '%s\n' "$tracked" >&2
+            exit 1
+          fi
       - name: Gitleaks
         run: |
           curl --proto '=https' --tlsv1.2 -fsSL -o gitleaks.tar.gz \

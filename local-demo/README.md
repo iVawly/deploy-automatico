@@ -40,7 +40,8 @@ O script:
 2. Gera credenciais aleatórias e cria os segredos locais `traefik_dashboard_users` e `grafana_admin_password`; grava tudo em `local-demo/state/credentials.env` (ignorado pelo Git).
 3. Implanta a stack `demo-platform` (Traefik, registry, Uptime Kuma, Loki, Alloy, Grafana).
 4. Constrói e publica as imagens `1.0.0`, `1.0.1` e `2.0.0`.
-5. Executa `ops-deploy bootstrap demo-app 1.0.0`.
+5. Executa `ops-deploy bootstrap demo-app 1.0.0`; se já houver release estável,
+   valida a saúde e recria o slot desejado (sem rota, usa o ledger).
 
 ## Executar o roteiro
 

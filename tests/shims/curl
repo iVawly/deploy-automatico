@@ -22,7 +22,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-body='{"status":"healthy","version":"test"}'
+health_version="$(cat "$SHIM_STATE/health-version" 2>/dev/null || printf 'test')"
+body="{\"status\":\"healthy\",\"version\":\"$health_version\"}"
 code=200
 
 if [[ "$url" == *"app-"*"-blue"* || "$url" == *"app-"*"-green"* ]]; then
@@ -36,17 +37,41 @@ if [[ "$url" == *"app-"*"-blue"* || "$url" == *"app-"*"-green"* ]]; then
     body="$(cat "$SHIM_STATE/weird-health-body")"
     code=200
   fi
-elif [[ "$url" == *"traefik"* || "$url" == *"test-app.internal.example.com"* ]]; then
-  if [[ -f "$SHIM_STATE/public-fail" ]]; then
-    body='{"message":"bad gateway"}'
-    code=502
-  else
-    body='{"service":"test-app"}'
-    code=200
-  fi
 else
-  code=404
-  body='{"message":"not found"}'
+  host="${url#*://}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  route=""
+  for candidate in "${OPS_DEPLOY_DYNAMIC_DIR:-}"/*.yml; do
+    [[ -f "$candidate" ]] || continue
+    if grep -Fq "Host(\`$host\`)" "$candidate"; then
+      route="$candidate"
+    fi
+  done
+  if [[ -n "$route" ]]; then
+    version="$(sed -n 's/^# .*version=\([^ ]*\).*/\1/p' "$route" | head -n 1)"
+    [[ -f "$SHIM_STATE/public-version" ]] && version="$(cat "$SHIM_STATE/public-version")"
+    if [[ -f "$SHIM_STATE/public-stale-for-version" ]] \
+      && [[ "$version" == "$(cat "$SHIM_STATE/public-stale-for-version")" ]]; then
+      version="$(cat "$SHIM_STATE/public-stale-version" 2>/dev/null || printf 'stale')"
+    fi
+    fail=0
+    [[ -f "$SHIM_STATE/public-fail" ]] && fail=1
+    if [[ -f "$SHIM_STATE/public-fail-version" ]] \
+      && [[ "$version" == "$(cat "$SHIM_STATE/public-fail-version")" ]]; then
+      fail=1
+    fi
+    if [[ "$fail" == "1" ]]; then
+      body='{"message":"bad gateway"}'
+      code=502
+    else
+      body="{\"service\":\"$host\",\"version\":\"$version\"}"
+      code=200
+    fi
+  else
+    code=404
+    body='{"message":"not found"}'
+  fi
 fi
 
 printf '%s\n%s' "$body" "$code"
