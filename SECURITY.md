@@ -20,7 +20,7 @@ diretamente pelo GitHub e combine um canal privado antes de enviar detalhes.
 
 ## O que esperar
 
-- Confirmação de recebimento em até 3 dias úteis.
+- Confirmação de recebimento em até x dias úteis.
 - Triagem inicial com classificação de severidade e próximo passo.
 - Atualização durante a investigação; correção priorizada para achados críticos.
 - Crédito na divulgação, se você quiser e se a política do projeto permitir.
