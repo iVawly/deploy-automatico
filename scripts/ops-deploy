@@ -40,6 +40,7 @@ info() { log "INFO  $*"; }
 warn() { log "WARN  $*"; }
 err() { log "ERROR $*"; }
 die() { err "$*"; exit 1; }
+usage_error() { err "$*"; usage >&2; exit 2; }
 
 validate_uint() {
   [[ "$2" =~ ^[0-9]+$ ]] || die "$1 inválido: $2 (use um inteiro >= 0)"
@@ -113,7 +114,7 @@ ops-deploy - blue-green deploy CLI for single-node Docker Swarm
 Usage:
   ops-deploy deploy <app> <version> [--digest sha256:...]
   ops-deploy rollback <app> [version]   Deploy the last stable (or a given) version and switch traffic back
-  ops-deploy verify <app> [--slot S] [--quiet]  Probe the deep health endpoint (5s timeout) and print JSON
+  ops-deploy verify <app> [--slot S] [--quiet]  Probe the deep health endpoint (APP_HEALTH_TIMEOUT) and print JSON
   ops-deploy status <app> [--json]      Show active release, recent history and service state
   ops-deploy bootstrap <app> <version> [--digest sha256:...]
   ops-deploy recover <app> [--from-ledger]  Recreate the desired slot (or ledger slot with --from-ledger)
@@ -140,7 +141,7 @@ Environment:
   OPS_DEPLOY_PUBLIC_RETRIES Attempts for the public probe (default: 6)
   OPS_DEPLOY_PUBLIC_INTERVAL Seconds between public probe attempts (default: 2)
   OPS_DEPLOY_IMAGE_DIGEST   Digest sha256:... used by deploy/bootstrap (or pass --digest)
-  OPS_DEPLOY_ALLOW_MUTABLE_TAG 1 allows tag-only deploys (legacy/local demo only)
+  OPS_DEPLOY_ALLOW_MUTABLE_TAG 1 allows tag-only deploy/bootstrap/recover/rollback (legacy/local demo only)
   OPS_DEPLOY_ALLOW_UNVERIFIED 1 allows deploy/rollback without a public version probe
   OPS_DEPLOY_RETRY_MAX      Attempts for docker pull/service create (default: 3)
   OPS_DEPLOY_RETRY_DELAY    Seconds between attempts (default: 2)
@@ -279,13 +280,13 @@ validate_docker_refs() {
 }
 
 is_immutable_version() {
-  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]
+  [[ "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
 }
 
 require_version() {
   local version="$1"
   [[ -n "$version" ]] || die "versão não informada"
-  is_immutable_version "$version" || die "versão '$version' não é imutável: use SemVer (ex.: 1.4.0) e nunca 'latest'"
+  is_immutable_version "$version" || die "versão '$version' não é imutável: use SemVer sem '+build' (ex.: 1.4.0) e nunca 'latest'"
 }
 
 is_digest() {
@@ -299,7 +300,7 @@ require_digest() {
     return 0
   fi
   if [[ "$ALLOW_MUTABLE_TAG" == "1" ]]; then
-    warn "deploy sem digest permitido por OPS_DEPLOY_ALLOW_MUTABLE_TAG=1; a tag pode ser sobrescrita"
+    warn "operação sem digest permitida por OPS_DEPLOY_ALLOW_MUTABLE_TAG=1; a tag pode ser sobrescrita"
     return 0
   fi
   die "digest obrigatório: passe --digest sha256:... ou defina OPS_DEPLOY_IMAGE_DIGEST"
@@ -807,9 +808,9 @@ cmd_bootstrap() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --digest)
-        [[ $# -ge 2 ]] || die "faltou valor para --digest"
+        [[ $# -ge 2 ]] || usage_error "faltou valor para --digest"
         digest="$2"; shift 2 ;;
-      *) die "argumento inválido para bootstrap: $1" ;;
+      *) usage_error "argumento inválido para bootstrap: $1" ;;
     esac
   done
   load_app "$app"
@@ -822,8 +823,11 @@ cmd_bootstrap() {
   if last_success_line "$app" >/dev/null 2>&1; then
     die "já existe release estável para $app; use 'ops-deploy deploy $app $version'"
   fi
-  if desired_state; then
-    die "já existe rota para $app ($DESIRED_VERSION/$DESIRED_SLOT); rode 'ops-deploy doctor $app' e reconcilie"
+  if [[ -e "$(route_file)" || -L "$(route_file)" ]]; then
+    if desired_state; then
+      die "já existe rota para $app ($DESIRED_VERSION/$DESIRED_SLOT); rode 'ops-deploy doctor $app' e reconcilie"
+    fi
+    die "já existe arquivo de rota para $app em $(route_file), mas ele não está no formato ops-deploy; revise e remova manualmente antes do bootstrap"
   fi
 
   local image
@@ -870,7 +874,7 @@ cmd_recover() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --from-ledger) from_ledger=1; shift ;;
-      *) die "argumento inválido para recover: $1" ;;
+      *) usage_error "argumento inválido para recover: $1" ;;
     esac
   done
   load_app "$app"
@@ -886,16 +890,19 @@ cmd_recover() {
     slot="$DESIRED_SLOT"; version="$DESIRED_VERSION"; digest="$DESIRED_DIGEST"
     if ledger_active_state "$app"; then
       if [[ "$ACTIVE_VERSION" != "$version" || "$ACTIVE_SLOT" != "$slot" ]]; then
-        warn "divergência rota=$version/$slot ledger=$ACTIVE_VERSION/$ACTIVE_SLOT; recuperando o estado desejado (use --from-ledger para o ledger)"
+        warn "divergência rota=$version/$slot ledger=$ACTIVE_VERSION/$ACTIVE_SLOT; recuperando o estado desejado sem herdar o digest do ledger (use --from-ledger para o ledger)"
+      else
+        [[ -n "$digest" ]] || digest="$ACTIVE_DIGEST"
       fi
-      [[ -n "$digest" ]] || digest="$ACTIVE_DIGEST"
     fi
   else
-    die "rota ausente para $app; use 'ops-deploy recover $app --from-ledger' para recuperar a partir do ledger"
+    die "rota ausente ou inválida para $app; use 'ops-deploy recover $app --from-ledger' para recuperar a partir do ledger"
   fi
 
   if [[ -z "$digest" ]]; then
-    warn "registro sem digest para $app $version; recuperando por tag (registro legado)"
+    [[ "$ALLOW_MUTABLE_TAG" == "1" ]] \
+      || die "registro sem digest para $app $version; defina OPS_DEPLOY_ALLOW_MUTABLE_TAG=1 para recuperar por tag (registro legado)"
+    warn "registro sem digest para $app $version; recuperando por tag por OPS_DEPLOY_ALLOW_MUTABLE_TAG=1"
   else
     is_digest "$digest" || die "digest inválido para $app $version: $digest"
   fi
@@ -940,9 +947,9 @@ cmd_deploy() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --digest)
-        [[ $# -ge 2 ]] || die "faltou valor para --digest"
+        [[ $# -ge 2 ]] || usage_error "faltou valor para --digest"
         digest="$2"; shift 2 ;;
-      *) die "argumento inválido para deploy: $1" ;;
+      *) usage_error "argumento inválido para deploy: $1" ;;
     esac
   done
   load_app "$app"
@@ -1014,7 +1021,7 @@ cmd_deploy() {
 cmd_rollback() {
   local app="${1:-}" target="${2:-}"
   [[ -n "$app" ]] || { usage; exit 2; }
-  [[ $# -le 2 ]] || die "argumento inválido para rollback: $3"
+  [[ $# -le 2 ]] || usage_error "argumento inválido para rollback: $3"
   load_app "$app"
   require_docker
   validate_docker_refs
@@ -1038,7 +1045,9 @@ cmd_rollback() {
   local digest image
   digest="$(version_digest "$app" "$target" || true)"
   if [[ -z "$digest" ]]; then
-    warn "ledger sem digest para $app $target; rollback por tag (registro legado)"
+    [[ "$ALLOW_MUTABLE_TAG" == "1" ]] \
+      || die "ledger sem digest para $app $target; defina OPS_DEPLOY_ALLOW_MUTABLE_TAG=1 para rollback por tag (registro legado)"
+    warn "ledger sem digest para $app $target; rollback por tag por OPS_DEPLOY_ALLOW_MUTABLE_TAG=1"
   fi
   image="$(image_ref "$target" "$digest")"
 
@@ -1096,10 +1105,10 @@ cmd_verify() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --slot)
-        [[ $# -ge 2 && -n "$2" ]] || die "faltou valor para --slot"
+        [[ $# -ge 2 && -n "$2" ]] || usage_error "faltou valor para --slot"
         slot="$2"; shift 2 ;;
       --quiet) json=0; shift ;;
-      *) die "argumento inválido para verify: $1" ;;
+      *) usage_error "argumento inválido para verify: $1" ;;
     esac
   done
   load_app "$app"
@@ -1112,7 +1121,7 @@ cmd_verify() {
     elif ledger_active_state "$app"; then
       slot="$ACTIVE_SLOT"
       expected="$ACTIVE_VERSION"
-      warn "rota ausente; verificando slot do ledger ($expected/$slot)"
+      warn "rota ausente ou inválida; verificando slot do ledger ($expected/$slot)"
     else
       die "nenhuma release estável registrada para $app"
     fi
@@ -1151,7 +1160,7 @@ cmd_status() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --json) as_json=1; shift ;;
-      *) die "argumento inválido para status: $1" ;;
+      *) usage_error "argumento inválido para status: $1" ;;
     esac
   done
   load_app "$app"
@@ -1172,7 +1181,9 @@ cmd_status() {
     desired_digest="$DESIRED_DIGEST"
   fi
   if [[ -n "$version" && "$version" == "$desired_version" && "$slot" == "$desired_slot" ]]; then
-    consistent=true
+    if [[ -z "$desired_digest" || -z "$digest" || "$desired_digest" == "$digest" ]]; then
+      consistent=true
+    fi
   fi
   if [[ "$APP_VERIFY_PUBLIC" == "1" && "$APP_PUBLIC_EXPECT_VERSION" == "1" ]]; then
     version_probe="enabled"
@@ -1249,7 +1260,7 @@ cmd_doctor() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --json) as_json=1; shift ;;
-      *) die "argumento inválido para doctor: $1" ;;
+      *) usage_error "argumento inválido para doctor: $1" ;;
     esac
   done
   load_app "$app"
@@ -1309,7 +1320,9 @@ cmd_doctor() {
   fi
 
   if [[ "$version_probe" == "enabled" && -n "$desired_version" ]]; then
-    if probe_public "$desired_version"; then
+    if [[ "$PROBE_MODE" != "local" ]] && ! command -v docker >/dev/null 2>&1; then
+      observed_status="skipped"
+    elif probe_public "$desired_version"; then
       observed_status="ok"
       observed_version="$(json_field_ws "$HEALTH_BODY" version)"
     else
@@ -1356,7 +1369,7 @@ cmd_doctor() {
         apply-pending)
           printf '  aguarde o Traefik aplicar a rota (file provider) e rode doctor novamente\n' ;;
         unverified)
-          printf '  configure APP_PUBLIC_EXPECT_VERSION=1 ou OPS_DEPLOY_ALLOW_UNVERIFIED=1 (auditado)\n' ;;
+          printf '  configure APP_PUBLIC_EXPECT_VERSION=1 ou OPS_DEPLOY_ALLOW_UNVERIFIED=1 (com aviso explícito)\n' ;;
       esac
     fi
   fi
@@ -1369,12 +1382,13 @@ cmd_reconcile() {
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --accept-route) mode="accept-route"; shift ;;
-      --accept-ledger) mode="accept-ledger"; shift ;;
-      *) die "argumento inválido para reconcile: $1" ;;
+      --accept-route | --accept-ledger)
+        [[ -z "$mode" ]] || usage_error "use apenas um de --accept-route ou --accept-ledger"
+        mode="accept-${1#--accept-}"; shift ;;
+      *) usage_error "argumento inválido para reconcile: $1" ;;
     esac
   done
-  [[ -n "$mode" ]] || die "reconcile exige --accept-route ou --accept-ledger"
+  [[ -n "$mode" ]] || usage_error "reconcile exige --accept-route ou --accept-ledger"
   load_app "$app"
   acquire_lock
 
@@ -1385,15 +1399,18 @@ cmd_reconcile() {
     ledger_append "$app" "$version" "$slot" reconcile success "rota aceita como estado desejado (auditado)" "$digest" \
       || die "não foi possível gravar a reconciliação no ledger"
     write_route "$slot" "$version" "$digest" \
-      || warn "ledger reconciliado, mas a rota não pôde ser normalizada"
+      || die "ledger reconciliado, mas a rota não pôde ser normalizada"
     info "reconciliação concluída: ledger passou a aceitar $version/$slot a partir da rota"
   else
     ledger_active_state "$app" || die "ledger sem release estável; nada para aceitar"
     slot="$ACTIVE_SLOT"; version="$ACTIVE_VERSION"; digest="$ACTIVE_DIGEST"
     write_route "$slot" "$version" "$digest" \
       || die "não foi possível reescrever a rota a partir do ledger"
-    ledger_append "$app" "$version" "$slot" reconcile success "rota reescrita a partir do ledger (auditado)" "$digest" \
-      || warn "rota reconciliada, mas o registro de auditoria não pôde ser gravado"
+    if ! ledger_append "$app" "$version" "$slot" reconcile success "rota reescrita a partir do ledger (auditado)" "$digest"; then
+      send_alert "Reconciliação de $app aplicada sem registro no ledger" \
+        "Rota $slot/$version foi reescrita, mas o registro de auditoria não foi gravado. Verifique o estado do ledger."
+      die "rota reconciliada, mas o registro de auditoria não pôde ser gravado"
+    fi
     info "reconciliação concluída: rota passou a apontar para $version/$slot a partir do ledger"
   fi
 }

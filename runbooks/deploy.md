@@ -8,7 +8,7 @@ Toda entrega de uma nova versão de aplicação em produção. Deploy manual no 
 
 - [ ] Pull request revisado e aprovado por outra pessoa.
 - [ ] Testes verdes na branch principal.
-- [ ] Versão SemVer decidida (ex.: `1.4.0`), nunca `latest`.
+- [ ] Versão SemVer decidida (ex.: `1.4.0`, sem `+build`), nunca `latest`.
 - [ ] Janela comunicada, se a aplicação for crítica.
 - [ ] Monitoramento ativo (`https://monitor.<DOMAIN>`).
 

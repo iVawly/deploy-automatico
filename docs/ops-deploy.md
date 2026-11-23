@@ -24,8 +24,10 @@ ops-deploy reconcile <app> --accept-route|--accept-ledger
 ```
 
 `deploy` e `bootstrap` exigem digest; `OPS_DEPLOY_IMAGE_DIGEST` pode substituir
-`--digest`. `OPS_DEPLOY_ALLOW_MUTABLE_TAG=1` libera tag sem digest apenas para
-demo local e migração legada.
+`--digest`. `OPS_DEPLOY_ALLOW_MUTABLE_TAG=1` libera tag sem digest em
+deploy/bootstrap/recover/rollback apenas para demo local e migração legada.
+A versão precisa ser SemVer utilizável como tag Docker; build metadata (`+...`)
+não é aceito.
 
 `verify --quiet` imprime a linha resumida em vez do JSON.
 
@@ -38,10 +40,12 @@ demo local e migração legada.
   append-only. Um registro final incompleto é descartado antes do próximo
   append.
 - **Runtime** é o estado dos serviços Docker; **observado** é a sonda pública e
-  de saúde interna. `deploy` e `rollback` recusam quando rota e ledger divergem
-  e quando o tráfego público ainda não confirma a versão desejada (aplicação
-  pendente do Traefik). `deploy` também exige o slot ativo saudável; `rollback`
-  pode partir de uma versão atual doente, mas exige saúde do alvo antes da troca.
+  de saúde interna. `doctor` consulta o runtime e a sonda pública; a saúde
+  interna é validada por `deploy`, `bootstrap`, `recover`, `rollback` e
+  `verify`. `deploy` e `rollback` recusam quando rota e ledger divergem e quando
+  o tráfego público ainda não confirma a versão desejada (aplicação pendente do
+  Traefik). `deploy` também exige o slot ativo saudável; `rollback` pode partir
+  de uma versão atual doente, mas exige saúde do alvo antes da troca.
 - Se não houver sonda **pública** que confirme versão (`APP_VERIFY_PUBLIC=0` ou
   `APP_PUBLIC_EXPECT_VERSION=0`), o estado é **não verificado** e `deploy`/
   `rollback` são recusados, salvo `OPS_DEPLOY_ALLOW_UNVERIFIED=1` explícito.
@@ -56,8 +60,8 @@ lado é a verdade; não há correção automática por adivinhação.
 Primeira instalação. Sobe o slot `blue`, aguarda saúde (e a versão, quando
 `APP_HEALTH_EXPECT_VERSION=1`), publica a rota, valida o hostname público quando
 `APP_VERIFY_PUBLIC=1` (incluindo a versão com `APP_PUBLIC_EXPECT_VERSION=1`) e
-grava a release inicial. Recusa se já existir release estável **ou** rota para a
-aplicação.
+grava a release inicial. Recusa se já existir release estável **ou** qualquer
+arquivo de rota para a aplicação, inclusive fora do formato gerado pelo CLI.
 
 ```bash
 sudo -u deployer ops-deploy bootstrap demo-app 1.0.0 --digest sha256:<hash>
@@ -93,10 +97,13 @@ Falha de saúde **antes** da troca preserva a versão atual. Falha de validaçã
 
 ### recover
 
-Recria o slot **desejado** (cabeçalho da rota) usando o digest registrado. Em
-caso de divergência rota × ledger, recupera o estado desejado. Se a rota não
-existir, o comando recusa e exige `--from-ledger` para escolher explicitamente a
-última release estável do ledger.
+Recria o slot **desejado** (cabeçalho da rota) usando o digest da rota. Se a
+rota não tiver digest e apontar para a mesma versão/slot do ledger, herda o
+digest do ledger; em caso de divergência rota ↔ ledger ou quando nenhum dos dois
+tem digest, não herda e exige `OPS_DEPLOY_ALLOW_MUTABLE_TAG=1` para recuperar
+por tag. Se a rota não existir ou não estiver no formato gerado pelo CLI, o
+comando recusa e exige `--from-ledger` para escolher explicitamente a última
+release estável do ledger.
 
 ```bash
 sudo -u deployer ops-deploy recover demo-app
@@ -109,7 +116,8 @@ alerta e instrui `reconcile --accept-route`.
 
 ### verify
 
-Consulta `http://app-<app>-<slot>:<porta><health_path>` com timeout de 5 segundos e imprime JSON:
+Consulta `http://app-<app>-<slot>:<porta><health_path>` com timeout
+`APP_HEALTH_TIMEOUT` (padrão de 5 segundos) e imprime JSON:
 
 ```json
 {"app":"demo-app","slot":"green","expected_version":"1.4.0","healthy":true,"http_code":"200","checked_at":"...","body":"{\"status\":\"healthy\",\"version\":\"1.4.0\"}"}
@@ -143,10 +151,12 @@ deploy, não uma sonda ao vivo). Também inclui `desired_version`, `desired_slot
 ### doctor
 
 Somente leitura. Compara estado desejado (rota), ledger, runtime Docker e sonda
-observada. Códigos de saída: `0` consistente, `1` inseguro/divergente (inclui
-`apply-pending` e `runtime-mismatch`), `2` não verificado ou precisa de
-reconciliação (`route-missing`, `route-invalid`, `ledger-drift`, `unverified`,
-`runtime-unknown`).
+pública observada. Não executa healthcheck interno; para isso use `verify`. Sem
+o binário `docker`, o runtime fica `unknown`, a sonda pública via container não é
+executada e o comando sai com `2`. Códigos de saída: `0` consistente, `1`
+inseguro/divergente (inclui `apply-pending` e `runtime-mismatch`), `2` não
+verificado ou precisa de reconciliação (`route-missing`, `route-invalid`,
+`ledger-drift`, `unverified`, `runtime-unknown`).
 
 ```bash
 sudo -u deployer ops-deploy doctor demo-app
@@ -235,12 +245,12 @@ consciente e documente o motivo no PR.
 | `OPS_DEPLOY_RETRY_MAX` | `3` | Tentativas para comandos Docker transitórios |
 | `OPS_DEPLOY_RETRY_DELAY` | `2` | Segundos entre tentativas |
 | `OPS_DEPLOY_DRAIN_SECONDS` | `10` | Janela antes de reduzir o slot anterior |
-| `OPS_DEPLOY_ALERT_WEBHOOK` | vazio | Alerta crítico em falha de rollback |
+| `OPS_DEPLOY_ALERT_WEBHOOK` | vazio | Alerta crítico em falha de rollback e em mutação aplicada sem registro no ledger |
 | `OPS_DEPLOY_ACTOR` | `GITHUB_ACTOR`/`id -un` | Autor no ledger |
 | `OPS_DEPLOY_COMMIT` | `GITHUB_SHA` | Commit no ledger |
 | `OPS_DEPLOY_IMAGE_DIGEST` | vazio | Digest usado por `deploy`/`bootstrap` |
-| `OPS_DEPLOY_ALLOW_MUTABLE_TAG` | `0` | `1` libera tag sem digest (legado/demo) |
-| `OPS_DEPLOY_ALLOW_UNVERIFIED` | `0` | `1` aceita deploy/rollback sem sonda pública que confirme versão (auditado) |
+| `OPS_DEPLOY_ALLOW_MUTABLE_TAG` | `0` | `1` libera tag sem digest em deploy/bootstrap/recover/rollback (legado/demo) |
+| `OPS_DEPLOY_ALLOW_UNVERIFIED` | `0` | `1` aceita deploy/rollback sem sonda pública que confirme versão (com aviso explícito) |
 
 ## Histórico
 

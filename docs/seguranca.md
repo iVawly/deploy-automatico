@@ -29,7 +29,9 @@ rootfs read-only, limites de recursos e usuário não-root.
   `/tmp` em tmpfs, limites de
   CPU/memória/PIDs e rotação de logs; sem acesso ao socket do Docker. A imagem
   deve rodar com usuário não-root.
-- Plataforma: rootfs read-only onde suportado, capabilities mínimas e limites de recursos.
+- Plataforma: rootfs read-only onde suportado e limites de recursos; Traefik e
+  `docker-socket-proxy` também removem capabilities, os demais serviços da
+  plataforma não declaram `cap_drop`.
 - Alloy não monta `/var/run/docker.sock`; fala com `docker-socket-proxy` em rede interna, com API somente leitura.
 - O dashboard do Traefik exige basic auth; Grafana e Uptime Kuma nunca são expostos sem TLS.
 - TLS mínimo 1.2, HSTS, `nosniff`, `frameDeny` e rate limit por IP no edge.
@@ -72,7 +74,7 @@ O usuário `deployer` pertence ao grupo `docker`, o que equivale a root no host.
 - conta sem shell de login e sem sudo;
 - runner auto-hospedado escuta apenas conexões de saída;
 - token de registro efêmero, usado uma única vez;
-- workflows de deploy limitados a `contents: read` e `packages: write`; CodeQL recebe `security-events: write` e Scorecard, `actions: read`;
+- workflows de deploy limitados a `contents: read`, `packages: write` e `id-token: write` (Cosign); CodeQL recebe `security-events: write` e o Scorecard usa `actions: read`, `contents: read`, `id-token: write` e `security-events: write`;
 - segredos do repositório com escopo mínimo;
 - revogação: remover o runner em GitHub → Settings → Actions → Runners e apagar `/opt/actions-runner/.credentials`.
 
@@ -86,7 +88,7 @@ O usuário `deployer` pertence ao grupo `docker`, o que equivale a root no host.
   do arquivo. Antes de substituir qualquer item, cria um backup
   `pre-restore-*` verificável; se isso falhar, aborta sem alterar o host. O
   override `RESTORE_ALLOW_NO_BACKUP=1` é auditado e reservado a emergência.
-- Teste de restauração registrado em `docs/aceite.md`.
+- O teste de restauração deve ser registrado em `docs/aceite.md` após a execução.
 
 ## Resposta a vazamento
 

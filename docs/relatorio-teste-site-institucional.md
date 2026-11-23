@@ -63,8 +63,8 @@ Para transformar o site em uma aplicação deployável:
 5. O app foi configurado em `local-demo/apps/wotan/app.conf` com domínio,
    porta, imagem, rootfs read-only, `cap-drop ALL` e limites de recursos.
 
-As imagens foram publicadas no registry local com tags imutáveis e digests
-registrados no ledger.
+As imagens foram publicadas no registry local com tags versionadas (sem
+`latest`) e digests registrados no ledger quando informados.
 
 > **Nota sobre o CLI atual (1.3.0):** o `/health` do wotan devolve JSON com
 > `version`, mas a página pública é HTML sem esse campo. Por isso o `app.conf`
@@ -142,7 +142,8 @@ foi restaurada, a rota foi atualizada e o evento ficou registrado no ledger.
 
 O slot ativo foi escalado para zero para simular a perda do serviço. Em
 seguida, o comando de recover recriou o serviço a partir do estado registrado
-(rota desejada, com o ledger como referência de versão/digest).
+(rota desejada, com o ledger como referência de versão e, quando disponível, de
+digest).
 
 O health voltou a responder corretamente na versão registrada como ativa.
 
@@ -151,8 +152,8 @@ O health voltou a responder corretamente na versão registrada como ativa.
 O `verify` consultou o health do slot ativo e devolveu JSON válido com
 `healthy: true` e a versão em execução.
 
-O `status` mostrou versão ativa, slot, digest, versões estáveis, últimas
-releases e os serviços da aplicação.
+O `status` mostrou versão ativa, slot, digest (quando presente), versões
+estáveis, últimas releases e os serviços da aplicação.
 
 ## Resultados por versão
 

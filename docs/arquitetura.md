@@ -78,9 +78,11 @@ adivinhação.
 
 ## Fluxo de rollback
 
-`ops-deploy rollback <app> [versao]` reutiliza a imagem estável pelo digest registrado, recria o
-slot de destino, valida saúde e, após trocar a rota de volta, valida o hostname público
-(quando `APP_VERIFY_PUBLIC=1`). O rollback não desfaz
+`ops-deploy rollback <app> [versao]` reutiliza a imagem estável pelo digest
+registrado (registro legado sem digest exige
+`OPS_DEPLOY_ALLOW_MUTABLE_TAG=1`), recria o slot de destino, valida saúde e,
+após trocar a rota de volta, valida o hostname público (quando
+`APP_VERIFY_PUBLIC=1`). O rollback não desfaz
 migração de dados: compatibilidade de schema é responsabilidade da aplicação.
 
 ## Limites de confiança
@@ -90,7 +92,7 @@ migração de dados: compatibilidade de schema é responsabilidade da aplicaçã
 | Internet → Traefik | exposição, TLS fraco, abuso | TLS 1.2+, HSTS, rate limit, headers, portas internas fechadas |
 | Traefik → serviços | acesso direto a dashboards | basic auth no dashboard, rede `public` controlada |
 | Runner → host | runner comprometido executa como `deployer` (grupo docker) | PR revisado, environment `production`, token efêmero, permissões mínimas; risco residual aceito e documentado |
-| Alloy → Docker | socket bruto equivale a root | socket proxy read-only em rede interna, capabilities mínimas |
+| Alloy → Docker | socket bruto equivale a root | socket proxy read-only em rede interna; Alloy sem socket bruto |
 | GitHub → imagem | tag mutável ou build adulterado | SemVer, digest, SBOM/proveniência, Cosign (assinatura gerada; deploy não verifica) e Gitleaks/Trivy |
 | Operador → segredos | vazamento em shell/histórico | Docker Secrets, `__FILE`, `.env` ignorado, rotação documentada |
 
@@ -104,7 +106,7 @@ migração de dados: compatibilidade de schema é responsabilidade da aplicaçã
 | Rollback falha após a troca | versão restaurada é mantida para diagnóstico; o CLI envia alerta crítico quando `OPS_DEPLOY_ALERT_WEBHOOK` está definido e registra `WARN` quando não está |
 | Rota e ledger divergem | `deploy`/`rollback` bloqueiam; `doctor` classifica e `reconcile` registra a decisão explícita |
 | Traefik ainda não aplicou a rota | `doctor` reporta `apply-pending`; `deploy`/`rollback` bloqueiam até o tráfego público confirmar a versão ativa |
-| Sem sonda pública que confirme versão | estado `unverified`; mutações recusadas salvo `OPS_DEPLOY_ALLOW_UNVERIFIED=1` (auditado) |
+| Sem sonda pública que confirme versão | estado `unverified`; mutações recusadas salvo `OPS_DEPLOY_ALLOW_UNVERIFIED=1` (com aviso explícito) |
 | Ledger com registro final incompleto | reparo/descarte sob lock antes do próximo append; histórico íntegro |
 | Traefik reinicia | rotas vêm do file provider; serviços continuam |
 | Loki/Alloy indisponível | aplicação e deploy continuam; perda de logs durante a janela |

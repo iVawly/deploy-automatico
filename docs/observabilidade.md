@@ -50,11 +50,12 @@ Filtros por rótulo: `app` (aplicação lógica), `slot`, `version`, `service`
 
 ## Logs do pipeline
 
-As etapas de deploy e verify do GitHub Actions rodam através de
+No workflow do monorepo, as etapas de deploy e verify rodam através de
 `scripts/ci/log-exec.sh`, que grava cada linha como JSONL em
-`/var/log/ops-deploy/pipeline.jsonl`. O Alloy monta esse diretório em modo
-somente leitura e envia os registros ao Loki com `app="pipeline"` e
-`source="pipeline"`.
+`/var/log/ops-deploy/pipeline.jsonl`; o workflow standalone do `demo-app`
+executa o CLI diretamente e seus logs ficam no GitHub Actions. O Alloy monta
+esse diretório em modo somente leitura e envia os registros ao Loki com
+`app="pipeline"` e `source="pipeline"`.
 
 ```logql
 {app="pipeline"} | json

@@ -27,11 +27,10 @@ Demonstração do fluxo real da plataforma em um Docker Desktop com Swarm de nó
 
 ## Subir
 
-No Git Bash ou WSL:
+No Git Bash ou WSL, a partir da raiz do repositório:
 
 ```bash
-cd local-demo
-./scripts/up.sh
+bash local-demo/scripts/up.sh
 ```
 
 O script:
@@ -41,12 +40,15 @@ O script:
 3. Implanta a stack `demo-platform` (Traefik, registry, Uptime Kuma, Loki, Alloy, Grafana).
 4. Constrói e publica as imagens `1.0.0`, `1.0.1` e `2.0.0`.
 5. Executa `ops-deploy bootstrap demo-app 1.0.0`; se já houver release estável,
-   valida a saúde e recria o slot desejado (sem rota, usa o ledger).
+   confere a consistência rota/ledger, recria o slot desejado e usa
+   `--from-ledger` quando a rota estiver ausente.
 
 ## Executar o roteiro
 
+A partir da raiz do repositório:
+
 ```bash
-./scripts/demo.sh
+bash local-demo/scripts/demo.sh
 ```
 
 O roteiro mostra:
@@ -124,7 +126,7 @@ No Grafana, a datasource Loki já está provisionada. Consultas:
 ## Limpar
 
 ```bash
-./scripts/down.sh
+bash local-demo/scripts/down.sh
 ```
 
 A stack é removida; volumes, segredos e o ledger em `local-demo/state/` são preservados. Para remover tudo:

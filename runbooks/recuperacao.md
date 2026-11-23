@@ -88,7 +88,10 @@ sudo -u deployer ops-deploy recover <app>
 ```
 
 `recover` recria o slot **desejado** a partir da rota restaurada, usando o
-digest registrado. Se a rota não existir, o comando recusa; use
+digest da rota ou do ledger somente quando ambos apontam para a mesma
+versão/slot. Em divergência ou quando nenhum dos dois tem digest, o comando
+exige `OPS_DEPLOY_ALLOW_MUTABLE_TAG=1` para recuperar por tag. Se a rota não
+existir ou não estiver no formato gerado pelo CLI, o comando recusa; use
 `ops-deploy recover <app> --from-ledger` para recuperar explicitamente a última
 release estável do ledger. Divergência rota × ledger pode ser diagnosticada com
 `ops-deploy doctor <app>` e resolvida explicitamente com `ops-deploy reconcile

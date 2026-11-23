@@ -24,8 +24,9 @@ quê, com qual commit e configuração.
   dashboard com basic auth.
 - **Observabilidade**: Loki + Alloy + Grafana para logs estruturados e Uptime
   Kuma para disponibilidade, independentes do ciclo de deploy.
-- **Hardening**: containers read-only, `cap-drop`, limites
-  de recursos; host com SSH por chave, UFW, auditd, fail2ban e atualizações.
+- **Hardening**: slots read-only com `cap-drop ALL` e limites de recursos;
+  plataforma read-only onde suportado, com limites e cap-drop no edge/socket
+  proxy; host com SSH por chave, UFW, auditd, fail2ban e atualizações.
 - **Supply chain**: imagens por digest, actions por SHA, Gitleaks/Trivy/CodeQL,
   SBOM/proveniência e assinatura Cosign no fluxo de publicação.
 - **Documentação operacional**: runbooks de deploy, rollback, incidente,
@@ -59,9 +60,8 @@ Requisitos: Docker Desktop com Linux containers, Git Bash/WSL e portas 80, 443
 e 5000 livres.
 
 ```bash
-cd local-demo
-./scripts/up.sh
-./scripts/demo.sh
+bash local-demo/scripts/up.sh
+bash local-demo/scripts/demo.sh
 ```
 
 No Windows, execute os comandos no Git Bash ou WSL.
@@ -95,7 +95,8 @@ CodeQL e Scorecard.
 2. Base do host: `scripts/server/harden-system.sh`, `harden-ssh.sh`,
    `firewall.sh`, `install-docker.sh`, `init-swarm.sh`; runbook em
    [`runbooks/reconstrucao-servidor.md`](runbooks/reconstrucao-servidor.md).
-3. Segredos, `.env` e instalação: `scripts/install.sh`.
+3. Instalação e `.env`: `scripts/install.sh`; segredos da plataforma:
+   `scripts/bootstrap-platform.sh`.
 4. Plataforma: `sudo /opt/deploy-platform/scripts/bootstrap-platform.sh`.
 5. Runner: `scripts/server/install-runner.sh`; runbook em
    [`runbooks/runner.md`](runbooks/runner.md).

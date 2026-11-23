@@ -14,7 +14,7 @@ exige evidência de execução e aceite.
 | Observabilidade | pronto | Loki/Grafana/Alloy/Uptime Kuma, monitores documentados | criar monitores e testar notificação |
 | Segredos | pronto | Docker Secrets, `.env` ignorado, geração local | criar segredos reais e rotacionar |
 | Supply chain | pronto | imagens por digest, actions por SHA, SBOM/proveniência, assinatura Cosign | habilitar branch protection, revisar PRs e decidir se o deploy deve verificar a assinatura |
-| Hardening de containers | pronto | read-only, cap-drop, limites | smoke test no host |
+| Hardening de containers | pronto | slots read-only com `cap-drop ALL` e limites; plataforma read-only onde suportado, com limites (cap-drop em Traefik/socket proxy) | smoke test no host |
 | Hardening do host | pronto | SSH, UFW, sysctl, auditd, fail2ban, daemon.json | executar e validar no Ubuntu |
 | Runner | pronto | versão/checksum fixos, auto-update desligado | registrar runner e testar job |
 | Backup/restore | pronto | checksum, retenção, restore seguro | restaurar em host descartável |

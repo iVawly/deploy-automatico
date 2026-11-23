@@ -23,7 +23,8 @@
 sudo -u deployer ops-deploy verify <app>
 ```
 
-O campo `checks` indica a dependência que falhou (`status: down`) e a latência.
+O campo `checks` dentro do corpo do `/health` indica a dependência que falhou
+(`status: down`) e a latência.
 
 ### Logs
 
@@ -32,7 +33,7 @@ Grafana → Explore → Loki:
 ```logql
 {app="<app>"} | json | level="error"
 {app="<app>", version="<versao>"} |~ "unhealthy|timeout|refused|500"
-{service="<app>"} | json | duration_ms > 1000
+{app="<app>"} | json | duration_ms > 1000
 ```
 
 ### Container e serviço

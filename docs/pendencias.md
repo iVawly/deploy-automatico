@@ -63,7 +63,8 @@ Legenda: `[x]` resolvido (com validação)
   `.env`; restore o aplica com `0600` e preserva backup `pre-restore`.
 - [x] **M14 — Logs do pipeline não centralizados.** `scripts/ci/log-exec.sh`
   grava JSONL em `/var/log/ops-deploy/pipeline.jsonl`; Alloy coleta o diretório e
-  envia ao Loki com `app="pipeline"`. Workflow usa o wrapper em deploy/verify.
+  envia ao Loki com `app="pipeline"`. O workflow do monorepo usa o wrapper em
+  deploy/verify; o standalone executa o CLI diretamente.
 - [x] **M15 — Demo local validava o proxy errado.** O wrapper usava o padrão
   `platform_traefik`, mas a stack local é `demo-platform`, cujo DNS é
   `demo-platform_traefik`; o `bootstrap`/`deploy` abortava na verificação
@@ -189,3 +190,11 @@ Legenda: `[x]` resolvido (com validação)
   `pre-restore` verificado; docs, runbooks, changelog e demo local foram
   alinhados ao comportamento real (incluindo `recover --from-ledger` e o
   override explícito para o wotan).
+- 2026-11-19: checagem profunda pós-sincronização. Corrigidos `bootstrap` com
+  rota pré-existente não reconhecida, herança indevida de digest no `recover`,
+  `status` sem digest, `reconcile` com flags conflitantes ou auditoria falha,
+  `doctor` sem Docker, SemVer/exit codes e recuperação por tag em registros
+  legados. Docs, runbooks, workflows e demo local alinhados. Validado com
+  `shellcheck`, `yamllint`, `bash -n`, `git diff --check`, `bats tests` (64
+  testes, 8 de restore pulados), `unshare -r bats tests/restore-config.bats`
+  (8 testes) e Python (10 testes). Ainda não validado em host Ubuntu real.

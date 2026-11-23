@@ -26,7 +26,7 @@ sudo -u deployer ops-deploy rollback <app> 1.3.2
 
 1. Exige sonda pública que confirme versão; sem isso, recusa salvo `OPS_DEPLOY_ALLOW_UNVERIFIED=1` (registrado com aviso).
 2. Exige consistência entre rota desejada e ledger e confirma que o tráfego público já serve a versão atual. Divergência ou aplicação pendente do Traefik bloqueia o rollback; diagnostique com `ops-deploy doctor <app>`.
-3. Identifica a versão alvo no ledger `/var/lib/ops-deploy/releases.jsonl`.
+3. Identifica a versão alvo e o digest no ledger `/var/lib/ops-deploy/releases.jsonl`; registro legado sem digest exige `OPS_DEPLOY_ALLOW_MUTABLE_TAG=1`.
 4. Baixa a imagem já publicada (não reconstrói).
 5. Sobe a versão alvo no slot inativo e aguarda saúde profunda (e a versão, quando `APP_HEALTH_EXPECT_VERSION=1`).
 6. Troca a rota do Traefik e valida o hostname público, exigindo a versão alvo quando `APP_PUBLIC_EXPECT_VERSION=1`.

@@ -66,4 +66,4 @@ Falhas comuns:
 
 ## Segurança
 
-Pertencer ao grupo `docker` equivale a root. Não adicione outros usuários ao grupo sem necessidade, não use o runner para jobs de repositórios não confiáveis e mantenha as permissões do workflow no mínimo (`contents: read`, `packages: write`).
+Pertencer ao grupo `docker` equivale a root. Não adicione outros usuários ao grupo sem necessidade, não use o runner para jobs de repositórios não confiáveis e mantenha as permissões do workflow no mínimo (`contents: read`, `packages: write`, com `id-token: write` apenas para assinatura Cosign).

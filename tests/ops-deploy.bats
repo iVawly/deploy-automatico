@@ -48,6 +48,16 @@ bootstrap() {
   [[ "$output" == *"já existe release estável"* ]]
 }
 
+@test "bootstrap is refused when any route file already exists" {
+  printf 'http:\n  routers: {}\n' >"$TEST_ROOT/dynamic/test-app.yml"
+
+  run "$OPS" bootstrap test-app 1.0.0
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"já existe arquivo de rota"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-blue" ]
+  [ ! -f "$SHIM_STATE/releases.jsonl" ]
+}
+
 @test "bootstrap records a failure when the initial service cannot be created" {
   run env SHIM_DOCKER_FAIL_CREATE=1 OPS_DEPLOY_RETRY_MAX=1 "$OPS" bootstrap test-app 1.0.0
   [ "$status" -eq 1 ]
@@ -78,6 +88,35 @@ bootstrap() {
   grep -q '"version":"1.0.0".*"slot":"blue".*"action":"recover".*"result":"success"' "$SHIM_STATE/releases.jsonl"
 }
 
+@test "recover inherits the ledger digest when the route matches the release" {
+  bootstrap
+  rm -f "$SHIM_STATE/services/app-test-app-blue" "$SHIM_STATE/services/app-test-app-blue.replicas"
+  sed -i 's/ digest=sha256:[0-9a-f]*/ digest=/' "$TEST_ROOT/dynamic/test-app.yml"
+  : >"$SHIM_LOG"
+
+  run "$OPS" recover test-app
+  [ "$status" -eq 0 ]
+  grep -q "test-app:1.0.0@$TEST_DIGEST" "$SHIM_LOG"
+}
+
+@test "recover does not inherit a digest from a divergent ledger release" {
+  bootstrap
+  rm -f "$SHIM_STATE/services/app-test-app-blue" "$SHIM_STATE/services/app-test-app-blue.replicas"
+  sed -i 's/^# ops-deploy route: .*/# ops-deploy route: app=test-app version=2.0.0 slot=blue digest=/' \
+    "$TEST_ROOT/dynamic/test-app.yml"
+  : >"$SHIM_LOG"
+
+  run "$OPS" recover test-app
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ALLOW_MUTABLE_TAG"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-blue" ]
+
+  run env OPS_DEPLOY_ALLOW_MUTABLE_TAG=1 "$OPS" recover test-app
+  [ "$status" -eq 0 ]
+  grep -q 'test-app:2.0.0' "$SHIM_LOG"
+  ! grep -q "test-app:2.0.0@$TEST_DIGEST" "$SHIM_LOG"
+}
+
 @test "deploy without bootstrap is refused" {
   run "$OPS" deploy test-app 1.0.0
   [ "$status" -eq 1 ]
@@ -87,6 +126,20 @@ bootstrap() {
 
 @test "deploy rejects mutable versions such as latest" {
   run "$OPS" bootstrap test-app latest
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"não é imutável"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-blue" ]
+}
+
+@test "bootstrap rejects version strings that are not SemVer" {
+  run "$OPS" bootstrap test-app 1.2.3.4
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"não é imutável"* ]]
+  [ ! -f "$SHIM_STATE/services/app-test-app-blue" ]
+}
+
+@test "bootstrap rejects SemVer build metadata that cannot be a Docker tag" {
+  run "$OPS" bootstrap test-app 1.2.3+build.5
   [ "$status" -eq 1 ]
   [[ "$output" == *"não é imutável"* ]]
   [ ! -f "$SHIM_STATE/services/app-test-app-blue" ]
@@ -162,14 +215,14 @@ bootstrap() {
 @test "verify requires a value for --slot" {
   bootstrap
   run "$OPS" verify test-app --slot
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
   [[ "$output" == *"faltou valor para --slot"* ]]
 }
 
 @test "status rejects unknown arguments" {
   bootstrap
   run "$OPS" status test-app --bogus
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
   [[ "$output" == *"argumento inválido para status"* ]]
 }
 
@@ -219,6 +272,23 @@ bootstrap() {
   run "$OPS" rollback test-app 9.9.9
   [ "$status" -eq 1 ]
   [[ "$output" == *"não consta como estável"* ]]
+  grep -q 'app-test-app-blue:8080' "$TEST_ROOT/dynamic/test-app.yml"
+}
+
+@test "rollback refuses a legacy target without a digest unless explicitly allowed" {
+  bootstrap
+  run "$OPS" deploy test-app 1.0.1
+  [ "$status" -eq 0 ]
+  sed -i '/"version":"1.0.0".*"action":"bootstrap"/s/"digest":"[^"]*"/"digest":""/' \
+    "$SHIM_STATE/releases.jsonl"
+
+  run "$OPS" rollback test-app 1.0.0
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ALLOW_MUTABLE_TAG"* ]]
+  grep -q 'app-test-app-green:8080' "$TEST_ROOT/dynamic/test-app.yml"
+
+  run env OPS_DEPLOY_ALLOW_MUTABLE_TAG=1 "$OPS" rollback test-app 1.0.0
+  [ "$status" -eq 0 ]
   grep -q 'app-test-app-blue:8080' "$TEST_ROOT/dynamic/test-app.yml"
 }
 
@@ -394,7 +464,7 @@ bootstrap() {
 @test "recover rejects unexpected extra arguments" {
   bootstrap
   run "$OPS" recover test-app --bogus
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
   [[ "$output" == *"argumento inválido para recover"* ]]
 }
 
@@ -402,7 +472,7 @@ bootstrap() {
   bootstrap
   route_before="$(cat "$TEST_ROOT/dynamic/test-app.yml")"
   run "$OPS" rollback test-app 1.0.0 --digest "$TEST_DIGEST"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
   [[ "$output" == *"argumento inválido para rollback"* ]]
   [ "$(cat "$TEST_ROOT/dynamic/test-app.yml")" = "$route_before" ]
 }
@@ -539,6 +609,18 @@ bootstrap() {
   grep -q '"version":"2.0.0".*"slot":"green".*"action":"deploy".*"result":"success"' "$SHIM_STATE/releases.jsonl"
 }
 
+@test "reconcile rejects conflicting accept flags" {
+  bootstrap
+  route_before="$(cat "$TEST_ROOT/dynamic/test-app.yml")"
+  ledger_before="$(cat "$SHIM_STATE/releases.jsonl")"
+
+  run "$OPS" reconcile test-app --accept-route --accept-ledger
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"use apenas um"* ]]
+  [ "$(cat "$TEST_ROOT/dynamic/test-app.yml")" = "$route_before" ]
+  [ "$(cat "$SHIM_STATE/releases.jsonl")" = "$ledger_before" ]
+}
+
 @test "recover rejects invalid resource settings before touching the active service" {
   for setting in APP_LOG_MAX_SIZE=lots APP_MEMORY_LIMIT=abc APP_CPU_LIMIT=fast APP_STOP_GRACE_PERIOD=soon; do
     field="${setting%%=*}"
@@ -589,6 +671,10 @@ bootstrap() {
   [[ "$output" == *'"state":"ledger-drift"'* ]]
   [[ "$output" == *'"consistent":false'* ]]
   [[ "$output" == *'"ledger":{"version":"1.0.0","slot":"blue","digest":"'"$TEST_DIGEST"'"'* ]]
+
+  run "$OPS" status test-app --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"consistent":false'* ]]
 }
 
 @test "recover validates Docker network and secrets before removing the service" {

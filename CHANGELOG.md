@@ -84,8 +84,19 @@ Versionamento SemVer para o CLI e para a plataforma.
   ao gravar o ledger após a troca emite alerta e exige `reconcile`.
 - `recover` recria a rota desejada por padrão; ledger só com `--from-ledger`.
 - Ledger repara/descarta registro final incompleto sob lock antes de cada append.
-- `bootstrap` recusa quando já existe rota para a aplicação, além de release
-  estável; restauração de rota é atômica.
+- `bootstrap` recusa qualquer arquivo de rota existente, inclusive fora do
+  formato gerado pelo CLI, além de release estável; restauração de rota é
+  atômica.
+- `recover` não herda mais o digest do ledger quando rota e ledger divergem;
+  `recover`/`rollback` sem digest exigem `OPS_DEPLOY_ALLOW_MUTABLE_TAG=1`.
+- `status` considera o digest ao calcular `consistent`; `reconcile` recusa
+  `--accept-route` junto com `--accept-ledger` e falha se a auditoria não puder
+  ser gravada.
+- `doctor` não tenta sondar via Docker quando o binário não está disponível;
+  argumentos inválidos retornam exit `2`; versões fora do SemVer utilizável como
+  tag Docker (sem `+build`) são recusadas.
+- O demo local recupera rota ausente/divergente antes de considerar a versão
+  saudável, em vez de deixar a rota faltando após um `verify` por ledger.
 - `demo-app` e fixtures declaram `APP_PUBLIC_EXPECT_VERSION=1`, alinhando a
   sonda pública ao novo gate de versão.
 
@@ -105,7 +116,7 @@ Versionamento SemVer para o CLI e para a plataforma.
 - `APP_PUBLIC_EXPECT_VERSION=1` exige a versão no corpo da sonda pública;
   `APP_HEALTH_EXPECT_VERSION=1` exige a versão no `/health`.
 - `OPS_DEPLOY_ALLOW_UNVERIFIED=1` permite deploy/rollback sem sonda pública de
-  versão de forma explícita e auditada.
+  versão de forma explícita, com aviso no stderr.
 - `docs/arquitetura.md`, `docs/ameacas.md`, `docs/producao.md` e ADRs.
 - `scripts/server/harden-system.sh` e `scripts/server/restore-config.sh`.
 - `make lint-yaml`, `make lint-actions`, `make lint-docker`, `make build`,

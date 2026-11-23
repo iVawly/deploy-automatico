@@ -127,22 +127,27 @@ for _ in $(seq 1 60); do
 done
 [[ "$traefik_ready" == "1" ]] || die "Traefik não respondeu em https://traefik.127.0.0.1.nip.io/"
 
-if bash "$DEMO_ROOT/scripts/ops" status demo-app --json 2>/dev/null | grep -q '"active_version":""'; then
-  log "primeiro deploy (bootstrap 1.0.0)"
-  bash "$DEMO_ROOT/scripts/ops" bootstrap demo-app 1.0.0
-else
-  log "release estável já registrada; verificando a versão ativa"
-  if ! bash "$DEMO_ROOT/scripts/ops" verify demo-app --quiet; then
-    log "serviço ativo ausente ou não saudável; recriando o slot desejado"
-    if ! bash "$DEMO_ROOT/scripts/ops" recover demo-app; then
-      if [[ -f "$DEMO_ROOT/dynamic/demo-app.yml" ]]; then
-        die "não foi possível recuperar a versão desejada; consulte 'ops status demo-app'"
-      fi
-      log "rota ausente; recuperando a última release estável do ledger"
-      bash "$DEMO_ROOT/scripts/ops" recover demo-app --from-ledger ||
-        die "não foi possível recuperar a versão ativa; consulte 'ops status demo-app'"
-    fi
+status_json="$(bash "$DEMO_ROOT/scripts/ops" status demo-app --json 2>/dev/null || true)"
+if printf '%s' "$status_json" | grep -q '"active_version":""'; then
+  if printf '%s' "$status_json" | grep -q '"desired_version":"[^"]'; then
+    log "rota existe sem release estável; recuperando o estado desejado"
+    bash "$DEMO_ROOT/scripts/ops" recover demo-app ||
+      die "não foi possível recuperar a versão desejada; consulte 'ops status demo-app'"
+  else
+    log "primeiro deploy (bootstrap 1.0.0)"
+    bash "$DEMO_ROOT/scripts/ops" bootstrap demo-app 1.0.0
   fi
+elif ! printf '%s' "$status_json" | grep -q '"consistent":true'; then
+  log "rota desejada ausente ou divergente; recuperando o estado desejado"
+  if ! bash "$DEMO_ROOT/scripts/ops" recover demo-app; then
+    log "rota ausente ou inválida; recuperando a última release estável do ledger"
+    bash "$DEMO_ROOT/scripts/ops" recover demo-app --from-ledger ||
+      die "não foi possível recuperar a versão ativa; consulte 'ops status demo-app'"
+  fi
+elif ! bash "$DEMO_ROOT/scripts/ops" verify demo-app --quiet; then
+  log "serviço ativo ausente ou não saudável; recriando o slot desejado"
+  bash "$DEMO_ROOT/scripts/ops" recover demo-app ||
+    die "não foi possível recuperar a versão desejada; consulte 'ops status demo-app'"
 fi
 
 log "pronto"
@@ -154,5 +159,5 @@ Monitor:  https://monitor.127.0.0.1.nip.io/ (crie a conta na primeira abertura)
 Grafana:  https://grafana.127.0.0.1.nip.io/ (usuário $GRAFANA_ADMIN_USER; senha em local-demo/state/credentials.env)
 
 O certificado é autoassinado: aceite o aviso do navegador.
-Execute local-demo/scripts/demo.sh para o roteiro de deploy, falha e rollback.
+Execute bash local-demo/scripts/demo.sh para o roteiro de deploy, falha e rollback.
 EOF
