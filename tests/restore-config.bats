@@ -10,40 +10,40 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TEST_ROOT"
+  if [[ $EUID -eq 0 ]]; then
+    rm -rf "$TEST_ROOT"
+  else
+    sudo -n rm -rf "$TEST_ROOT" 2>/dev/null || rm -rf "$TEST_ROOT"
+  fi
+}
+
+run_script() {
+  if [[ $EUID -eq 0 ]]; then
+    run env "$@" bash "$SCRIPT" "$ARCHIVE"
+  else
+    sudo -n true >/dev/null 2>&1 || skip "requer root ou sudo sem senha"
+    run sudo -n env "$@" bash "$SCRIPT" "$ARCHIVE"
+    # The script runs with umask 077, so artifacts created via sudo are 0600
+    # root-owned. This test tree is disposable; make it readable/removable for
+    # the invoking user so assertions and teardown can inspect it.
+    sudo -n chmod -R a+rX "$TEST_ROOT" 2>/dev/null || true
+  fi
 }
 
 run_restore() {
-  if [[ $EUID -eq 0 ]]; then
-    run env DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state" bash "$SCRIPT" "$ARCHIVE"
-  else
-    sudo -n true >/dev/null 2>&1 || skip "requer root ou sudo sem senha"
-    run sudo -n env DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state" bash "$SCRIPT" "$ARCHIVE"
-  fi
+  run_script DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state"
 }
 
 run_restore_forced() {
   local backup_dir="$1"
-  if [[ $EUID -eq 0 ]]; then
-    run env RESTORE_FORCE=1 BACKUP_DIR="$backup_dir" DEST="$TEST_ROOT/dest" \
-      STATE_DIR="$TEST_ROOT/state" bash "$SCRIPT" "$ARCHIVE"
-  else
-    sudo -n true >/dev/null 2>&1 || skip "requer root ou sudo sem senha"
-    run sudo -n env RESTORE_FORCE=1 BACKUP_DIR="$backup_dir" DEST="$TEST_ROOT/dest" \
-      STATE_DIR="$TEST_ROOT/state" bash "$SCRIPT" "$ARCHIVE"
-  fi
+  run_script RESTORE_FORCE=1 BACKUP_DIR="$backup_dir" \
+    DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state"
 }
 
 run_restore_forced_no_backup() {
   local backup_dir="$1"
-  if [[ $EUID -eq 0 ]]; then
-    run env RESTORE_FORCE=1 RESTORE_ALLOW_NO_BACKUP=1 BACKUP_DIR="$backup_dir" \
-      DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state" bash "$SCRIPT" "$ARCHIVE"
-  else
-    sudo -n true >/dev/null 2>&1 || skip "requer root ou sudo sem senha"
-    run sudo -n env RESTORE_FORCE=1 RESTORE_ALLOW_NO_BACKUP=1 BACKUP_DIR="$backup_dir" \
-      DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state" bash "$SCRIPT" "$ARCHIVE"
-  fi
+  run_script RESTORE_FORCE=1 RESTORE_ALLOW_NO_BACKUP=1 BACKUP_DIR="$backup_dir" \
+    DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state"
 }
 
 @test "restore accepts a regular configuration archive" {
@@ -139,16 +139,8 @@ run_restore_forced_no_backup() {
   mkdir -p "$TEST_ROOT/dest/dynamic" "$TEST_ROOT/backups"
   printf 'old\n' >"$TEST_ROOT/dest/dynamic/platform.yml"
 
-  if [[ $EUID -eq 0 ]]; then
-    run env RESTORE_FORCE=1 RESTORE_ALLOW_NO_BACKUP=1 BACKUP_DIR="$TEST_ROOT/backups" \
-      AUDIT_LOG=/dev/full DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state" \
-      bash "$SCRIPT" "$ARCHIVE"
-  else
-    sudo -n true >/dev/null 2>&1 || skip "requer root ou sudo sem senha"
-    run sudo -n env RESTORE_FORCE=1 RESTORE_ALLOW_NO_BACKUP=1 BACKUP_DIR="$TEST_ROOT/backups" \
-      AUDIT_LOG=/dev/full DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state" \
-      bash "$SCRIPT" "$ARCHIVE"
-  fi
+  run_script RESTORE_FORCE=1 RESTORE_ALLOW_NO_BACKUP=1 BACKUP_DIR="$TEST_ROOT/backups" \
+    AUDIT_LOG=/dev/full DEST="$TEST_ROOT/dest" STATE_DIR="$TEST_ROOT/state"
   [ "$status" -eq 1 ]
   [[ "$output" == *"auditoria"* ]]
   [ "$(cat "$TEST_ROOT/dest/dynamic/platform.yml")" = "old" ]
